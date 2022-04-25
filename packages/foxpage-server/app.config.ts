@@ -10,7 +10,7 @@ const envList: Record<string, string> = {
   production: 'production',
 };
 
-let env = envList.dev;
+let env = envList.development;
 if (process.env.NODE_ENV) {
   env = process.env.NODE_ENV;
 }
