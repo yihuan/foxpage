@@ -88,7 +88,7 @@ export function prettifyId(sourceData: any[]): any[] {
  * @returns boolean
  */
 export function checkName(name: string): boolean {
-  const illegalStr: number = name.search(/[^0-9a-zA-Z\-\_\/\@ ]/);
+  const illegalStr: number = name.search(/[^0-9a-zA-Z\-\_\/\@\. ]/);
   return illegalStr === -1;
 }
 
@@ -120,4 +120,46 @@ export function checkEmail(email: string): boolean {
  */
 export function formatToPath(name: string): string {
   return _.trim(_.toLower(name).replace(/[^0-9a-z]/g, ' ')).replace(/\s+/g, '-');
+}
+
+/**
+ * merge page url from host, slug and path
+ * @param host
+ * @param path
+ * @param slug
+ * @returns
+ */
+export function mergeUrl(host: string, path: string, slug?: string): string {
+  return _.trimEnd(host, '/') + '/' + _.trim(slug, '/') + '/' + _.trimStart(path, '/');
+}
+
+/**
+ * format number to mask list, eg. 15 => [1, 2, 4, 8]
+ * @param authValue
+ * @returns
+ */
+export function authToMask(authValue: number): number[] {
+  let authList: number[] = [];
+  for (let i = 0; ; i++) {
+    if (Math.pow(2, i) > authValue) {
+      break;
+    }
+    authList.push(Math.pow(2, i));
+  }
+
+  return authList;
+}
+
+/**
+ * format multi auth mask to array
+ * @param authMasks
+ * @returns
+ */
+export function authListToMask(authMasks: number[]): number[] {
+  let autList: number[] = [];
+  for (const auth of authMasks) {
+    autList = _.concat(autList, authToMask(auth));
+  }
+
+  return _.uniq(autList);
 }

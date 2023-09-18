@@ -1,9 +1,10 @@
 import _ from 'lodash';
 
-import { File, Folder } from '@foxpage/foxpage-server-types';
+import { Content, File, FileTypes, Folder } from '@foxpage/foxpage-server-types';
 
-import { TAG, TYPE } from '../../../config/constant';
+import { PRE, TAG, TYPE, VERSION } from '../../../config/constant';
 import * as Model from '../../models';
+import { FileContentAndVersion } from '../../types/content-types';
 import {
   AppFileList,
   AppFileType,
@@ -83,18 +84,28 @@ export class FileListService extends BaseService<File> {
    * @param  {string[]} contentIds
    * @returns Promise
    */
-  async getContentFileByIds(contentIds: string[]): Promise<Record<string, File>> {
+  async getContentFileByIds(contentIds: string[], applicationId?: string): Promise<Record<string, File>> {
     if (!contentIds || contentIds.length === 0) {
       return {};
     }
 
-    const contentList = await Service.content.list.getDetailByIds(contentIds);
+    let contentList = await Service.content.list.getDetailByIds(contentIds);
+    // get and set content file id to reference id
+    if (applicationId) {
+      contentList = await Service.content.list.setContentReferenceFileId(
+        applicationId as string,
+        contentList,
+      );
+    }
+
     const fileList = await this.getDetailByIds(_.uniq(_.map(contentList, 'fileId')));
     const fileObject = _.keyBy(fileList, 'id');
 
     let contentFileObject: Record<string, File> = {};
     contentList.forEach((content) => {
       contentFileObject[content.id] = fileObject[content.fileId] || {};
+      contentFileObject[content.id].componentType =
+        (content as any).componentType || fileObject[content.fileId].componentType || '';
     });
 
     return contentFileObject;
@@ -107,21 +118,33 @@ export class FileListService extends BaseService<File> {
    * @returns File
    */
   async getAppTypeFilePageList(params: AppTypeFileParams, pageInfo: PageSize): Promise<PageData<File>> {
-    const skip = (pageInfo.page - 1) * pageInfo.size;
-    const filter: AppTypeFileParams & { $and?: any } = {
+    const filter: Record<string, any> = {
       applicationId: params.applicationId,
       type: params.type,
       deleted: false,
-      $and: [{ name: { $regex: '^(?!__).*' } }], // Exclude system files with names beginning with __
     };
 
+    if (params.type === TYPE.CONDITION) {
+      filter.subType = { $nin: ['timeDisplay', 'showHide'] };
+    }
+
     if (params.search) {
-      filter['$and'].push({ name: { $regex: new RegExp(params.search, 'i') } });
+      filter['$or'] = [{ name: { $regex: new RegExp(params.search, 'i') } }, { id: params.search }];
+    }
+
+    // filter application or the special folder items
+    if (params.scopeId) {
+      filter.folderId =
+        !params.scope || params.scope === TYPE.APPLICATION ? params.scopeId : { $ne: params.scopeId };
     }
 
     const [fileCount, fileList] = await Promise.all([
       this.getCount(filter),
-      this.find(filter, '', { sort: { createTime: -1 }, skip, limit: pageInfo.size }),
+      this.find(filter, '', {
+        sort: { _id: -1 },
+        skip: (pageInfo.page - 1) * pageInfo.size,
+        limit: pageInfo.size,
+      }),
     ]);
 
     return { count: fileCount, list: fileList };
@@ -155,8 +178,8 @@ export class FileListService extends BaseService<File> {
       Service.store.goods.find({ 'details.id': { $in: fileIds }, status: 1, deleted: false }),
     ];
 
-    // Only variable and condition return content version value
-    if ([TYPE.VARIABLE, TYPE.CONDITION, TYPE.FUNCTION].indexOf(fileType) !== -1) {
+    // Only variable, condition, function and mock return content version value
+    if ([TYPE.VARIABLE, TYPE.CONDITION, TYPE.FUNCTION, TYPE.MOCK].indexOf(fileType) !== -1) {
       promises.push(Service.version.list.getMaxVersionByFileIds(fileIds));
     } else {
       promises.push(Service.content.list.getContentObjectByFileIds(fileIds));
@@ -176,6 +199,15 @@ export class FileListService extends BaseService<File> {
           content: contentObject[file.id]?.content || {},
           creator: creatorObject[file.creator] || {},
           online: !!fileOnlineObject[file.id],
+          version: {
+            base:
+              contentObject[file.id]?.contentId && contentObject[file.id].status === VERSION.STATUS_BASE
+                ? contentObject[file.id].version
+                : '',
+            live: contentObject[file.id]?.contentId
+              ? ''
+              : Service.version.number.getVersionFromNumber(contentObject[file.id]?.liveVersionNumber || 0),
+          },
         }) as FileAssoc,
       );
     });
@@ -189,11 +221,15 @@ export class FileListService extends BaseService<File> {
    * @param  {string[]} fileIds
    * @returns Promise
    */
-  async getReferencedByIds(applicationId: string, fileIds: string[]): Promise<Record<string, File>> {
+  async getReferencedByIds(
+    applicationId: string,
+    fileIds: string[],
+    type?: string,
+  ): Promise<Record<string, File>> {
     const fileList = await this.find({
       applicationId,
       deleted: false,
-      'tags.type': TAG.DELIVERY_REFERENCE,
+      'tags.type': type || TAG.DELIVERY_REFERENCE,
       'tags.reference.id': { $in: fileIds },
     });
     const referenceFileObject: Record<string, File> = {};
@@ -204,5 +240,158 @@ export class FileListService extends BaseService<File> {
     });
 
     return referenceFileObject;
+  }
+
+  /**
+   * Get app item (variable, condition, function) list or project item list
+   * if params.type is 'live' then get has live version's item
+   *
+   * response file, content and version detail, include relations detail
+   * @param params {applicationId, folderId?, search?, type?, page?, size?}
+   * @param type
+   * @returns
+   */
+  async getItemFileContentDetail(
+    params: any,
+    type: FileTypes,
+  ): Promise<{
+    list: FileContentAndVersion[];
+    counts: number;
+  }> {
+    let filter: Record<string, any> = { type };
+
+    if (type === TYPE.CONDITION) {
+      filter.subType = { $nin: ['timeDisplay', 'showHide'] };
+    }
+
+    if (params.search) {
+      filter.name = { $regex: new RegExp(params.search, 'i') };
+    }
+
+    let fileList = await this.getFileListByFolderId(params.folderId, filter);
+
+    // get live variable
+    let fileIds = _.map(fileList, 'id');
+    let fileContentList: Content[] = [];
+    const contentList = await Service.content.file.getContentByFileIds(fileIds);
+    if (params.type === 'live') {
+      contentList.forEach((content) => {
+        if (content.liveVersionNumber === 0) {
+          _.pull(fileIds, content.fileId);
+        } else {
+          fileContentList.push(content);
+        }
+      });
+    } else {
+      fileContentList = contentList;
+    }
+
+    // filter valid file list
+    fileList = _.filter(fileList, (file) => fileIds.indexOf(file.id) !== -1);
+
+    let fileVersion: FileContentAndVersion[] = [];
+    const pageFileList = _.chunk(fileList, params.size)[params.page - 1] || [];
+
+    if (fileIds.length > 0) {
+      // Get the live details of the content of the file
+      let versionObject = await Service.version.list.getContentMaxVersionDetail(_.map(fileContentList, 'id'));
+      const [versionItemRelation, contentGoodsList] = await Promise.all([
+        Service.version.list.getVersionListRelations(_.toArray(versionObject), params.type === 'live'),
+        Service.store.goods.getAppFileStatus(params.applicationId, _.map(pageFileList, 'id')),
+      ]);
+      const goodsStatusObject = _.keyBy(contentGoodsList, 'id');
+
+      // Splicing combination returns data
+      const fileContentObject = _.keyBy(fileContentList, 'fileId');
+      for (const file of pageFileList) {
+        const content = fileContentObject[file.id] || {};
+        const itemRelations = await Service.relation.formatRelationDetailResponse(
+          versionItemRelation[content.id],
+        );
+
+        fileVersion.push({
+          id: file.id,
+          name: file.name,
+          type: file.type,
+          version: versionObject?.[content.id]?.version || '',
+          versionNumber: content.liveVersionNumber || versionObject?.[content.id]?.versionNumber,
+          contentId: content.id,
+          content: Object.assign(versionObject?.[content.id]?.content || {}, { id: content.id }),
+          relations: itemRelations,
+          online: goodsStatusObject[content.fileId]?.status ? true : false,
+        });
+      }
+    }
+
+    return { list: fileVersion, counts: fileList.length };
+  }
+
+  /**
+   * get user involve file list
+   * @param params
+   * @returns
+   */
+  async getUserInvolveFiles(params: {
+    applicationId: string;
+    type: string;
+    userId: string;
+    search?: string;
+    skip?: number;
+    limit?: number;
+  }): Promise<{ counts: number; list: File[] }> {
+    const { applicationId = '', userId = '' } = params;
+    const userInvolveItems = await Service.auth.find(
+      {
+        targetId: userId,
+        allow: true,
+        'relation.applicationId': applicationId,
+        'relation.projectId': { $exists: true },
+      },
+      'relation',
+    );
+
+    let projectIds: string[] = [];
+    let fileIds: string[] = [];
+    userInvolveItems.forEach((item) => {
+      if (item.relation?.fileId) {
+        fileIds.push(item.relation.fileId);
+      } else if (item.relation?.projectId) {
+        projectIds.push(item.relation.projectId);
+      }
+    });
+
+    const fileParams: Record<string, any> = {
+      creator: { $ne: userId },
+      type: params.type,
+      deleted: false,
+    };
+
+    if (params.search && params.search.length === 20 && _.startsWith(params.search, PRE.FILE + '_')) {
+      fileParams.id = params.search;
+    } else {
+      fileParams['$or'] = [];
+      if (fileIds.length > 0) {
+        fileParams['$or'].push({ id: { $in: _.uniq(fileIds) } });
+      }
+
+      if (projectIds.length > 0) {
+        fileParams['$or'].push({ folderId: { $in: _.uniq(projectIds) } });
+      }
+
+      if (params.search) {
+        fileParams.name = { $regex: new RegExp(params.search, 'i') };
+      }
+    }
+
+    let counts = 0;
+    let fileList: File[] = [];
+    if (fileParams['$or']?.length > 0 || fileParams.id) {
+      [counts, fileList] = await Promise.all([
+        this.getCount(fileParams),
+        this.find(fileParams, '', { skip: params.skip || 0, limit: params.limit || 10 }),
+      ]);
+    }
+
+    return { counts, list: fileList };
   }
 }

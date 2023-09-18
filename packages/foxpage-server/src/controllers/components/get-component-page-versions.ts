@@ -39,16 +39,19 @@ export class GetComponentPageVersionList extends BaseController {
       this.service.content.info.setPageSize(params);
 
       let fileId = params.id;
+      let liveVersionId = '';
 
       // Check if file is a reference component
       const fileDetail = await this.service.file.info.getDetailById(fileId);
-      if (fileDetail.tags && fileDetail.tags?.[0]?.type === TAG.DELIVERY_REFERENCE) {
-        fileId = fileDetail.tags?.[0]?.reference?.id;
+      const referenceTag = _.find(fileDetail.tags || [], { type: TAG.DELIVERY_REFERENCE });
+      if (referenceTag && !_.isEmpty(referenceTag)) {
+        fileId = referenceTag.reference?.id;
+        liveVersionId = referenceTag.reference?.liveVersionId || '';
       }
 
       // Get the content ID under the file
       const contentDetail = await this.service.content.info.getDetail({ fileId, deleted: false });
-      if (!contentDetail) {
+      if (this.notValid(contentDetail)) {
         return Response.warning(i18n.component.invalidFileId, 2110901);
       }
 
@@ -57,20 +60,21 @@ export class GetComponentPageVersionList extends BaseController {
         deleted: false,
       });
 
+      const versionContents = _.map(versionList, (version) => version.content);
+      const componentIds = this.service.content.component.getComponentResourceIds(versionContents);
+      const [resourceObject, contentAllParents] = await Promise.all([
+        this.service.content.resource.getResourceContentByIds(componentIds),
+        this.service.content.list.getContentAllParents(componentIds),
+      ]);
+
+      const appResource = await this.service.application.getAppResourceFromContent(contentAllParents);
+      const contentResource = this.service.content.info.getContentResourceTypeInfo(
+        appResource,
+        contentAllParents,
+      );
+
       let contentVersionList: ContentVersionWithLive[] = [];
       for (const version of versionList) {
-        const componentIds = this.service.content.component.getComponentResourceIds([version.content]);
-        const [resourceObject, contentAllParents] = await Promise.all([
-          this.service.content.resource.getResourceContentByIds(componentIds),
-          this.service.content.list.getContentAllParents(componentIds),
-        ]);
-
-        const appResource = await this.service.application.getAppResourceFromContent(contentAllParents);
-        const contentResource = this.service.content.info.getContentResourceTypeInfo(
-          appResource,
-          contentAllParents,
-        );
-
         version.content.resource = this.service.version.component.assignResourceToComponent(
           version?.content?.resource || {},
           resourceObject,
@@ -80,9 +84,9 @@ export class GetComponentPageVersionList extends BaseController {
         contentVersionList.push(
           Object.assign(
             {
-              isLiveVersion: version.versionNumber === contentDetail.liveVersionNumber,
+              isLiveVersion: version.id === (liveVersionId || contentDetail.liveVersionId),
             },
-            version,
+            _.omit(version, ['operator', 'contentUpdateTime']),
           ),
         );
       }

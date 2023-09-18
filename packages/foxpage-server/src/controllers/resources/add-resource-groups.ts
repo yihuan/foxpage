@@ -40,7 +40,7 @@ export class AddResourceGroupDetail extends BaseController {
     params.name = _.trim(params.name);
 
     // Check the validity of the name
-    if (!checkName(params.name)) {
+    if (!params.name || !checkName(params.name)) {
       return Response.warning(i18n.file.invalidName, 2120401);
     }
 
@@ -52,7 +52,7 @@ export class AddResourceGroupDetail extends BaseController {
       }
 
       if (!params.tags || params.tags.length === 0 || !_.find(params.tags, { type: TAG.RESOURCE_GROUP })) {
-        return Response.warning(i18n.resource.invalidResourceGroupId);
+        return Response.warning(i18n.resource.invalidResourceGroupId, 2120404);
       }
 
       // Add resource group config to tags
@@ -67,9 +67,16 @@ export class AddResourceGroupDetail extends BaseController {
       });
 
       // Add resource group folder
+      const resourceTag = _.find(params.tags, 'resourceId') as Record<string, any>;
       const result = await this.service.folder.info.addTypeFolderDetail(folderDetail, {
         ctx,
         type: TYPE.RESOURCE as AppFolderTypes,
+        actionDataType: TYPE.RESOURCE,
+        distinctParams: {
+          'tags.type': TAG.RESOURCE_CONFIG,
+          'tags.resourceId': resourceTag.resourceId,
+          name: folderDetail.name,
+        },
       });
 
       if (result.code === 1) {

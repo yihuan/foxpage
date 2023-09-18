@@ -34,22 +34,23 @@ export class ApplicationModel extends BaseModel<Application> {
     const size = params.size || 20;
     const from = (page - 1) * size;
 
-    const searchParams: { $or?: any[]; deleted: boolean; organizationId?: string } = { deleted: false };
+    const searchParams: { $or?: any[]; deleted: boolean; organizationId?: string; creator?: string } = {
+      deleted: false,
+    };
 
     if (params.organizationId) {
       searchParams.organizationId = params.organizationId;
+    }
+
+    if (params.creator) {
+      searchParams.creator = params.creator;
     }
 
     if (params.search) {
       searchParams['$or'] = [{ name: { $regex: new RegExp(params.search, 'i') } }, { id: params.search }];
     }
 
-    return this.model
-      .find(searchParams, this.ignoreFields)
-      .sort('createTime')
-      .skip(from)
-      .limit(size)
-      .lean();
+    return this.model.find(searchParams, this.ignoreFields).sort({ _id: -1 }).skip(from).limit(size).lean();
   }
 
   /**
@@ -58,19 +59,22 @@ export class ApplicationModel extends BaseModel<Application> {
    * @returns {number} Promise
    */
   async getTotal(params: AppSearch): Promise<number> {
-    const searchParams: { $or?: any[]; deleted: boolean; organizationId?: string } = { deleted: false };
+    const searchParams: { $or?: any[]; deleted: boolean; organizationId?: string; creator?: string } = {
+      deleted: false,
+    };
 
     if (params.organizationId) {
       searchParams.organizationId = params.organizationId;
+    }
+
+    if (params.creator) {
+      searchParams.creator = params.creator;
     }
 
     if (params.search) {
       searchParams['$or'] = [{ name: { $regex: new RegExp(params.search, 'i') } }, { id: params.search }];
     }
 
-    return this.model
-      .find(searchParams)
-      .countDocuments()
-      .lean();
+    return this.model.find(searchParams).countDocuments().lean();
   }
 }

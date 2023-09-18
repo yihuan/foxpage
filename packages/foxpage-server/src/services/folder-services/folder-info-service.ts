@@ -2,7 +2,7 @@ import _ from 'lodash';
 
 import { AppFolderTypes, Folder } from '@foxpage/foxpage-server-types';
 
-import { LOG, PRE } from '../../../config/constant';
+import { LOG, PRE, TYPE } from '../../../config/constant';
 import * as Model from '../../models';
 import {
   AppDefaultFolderSearch,
@@ -35,9 +35,13 @@ export class FolderInfoService extends BaseService<Folder> {
   /**
    * Add the details of the new folder, return to the new query
    * @param  {Partial<Folder>} params
+   * @param {Options.ignoreUserLog} The status that do not save to content log, default is false
    * @returns Folder
    */
-  create(params: Partial<Folder>, options: { ctx: FoxCtx }): Folder {
+  create(
+    params: Partial<Folder>,
+    options: { ctx: FoxCtx; actionDataType?: string; ignoreUserLog?: boolean },
+  ): Folder {
     const folderDetail: Folder = {
       id: params.id || generationId(PRE.FOLDER),
       name: _.trim(params.name) || '',
@@ -51,7 +55,15 @@ export class FolderInfoService extends BaseService<Folder> {
     };
 
     options.ctx.transactions.push(Model.folder.addDetailQuery(folderDetail));
-    options.ctx.operations.push(...Service.log.addLogItem(LOG.CREATE, folderDetail));
+    !options.ignoreUserLog &&
+      Service.userLog.addLogItem(
+        { id: folderDetail.id },
+        {
+          ctx: options.ctx,
+          actions: [LOG.CREATE, options.actionDataType || '', TYPE.FOLDER],
+          category: { applicationId: folderDetail.applicationId, folderId: folderDetail.id },
+        },
+      );
 
     return folderDetail;
   }
@@ -73,21 +85,39 @@ export class FolderInfoService extends BaseService<Folder> {
   /**
    * Get app multi default folder ids
    * @param  {AppsFolderType} params
-   * @returns Promise
+   * @returns Promise {appId: folderId}
    */
   async getAppsTypeFolderId(params: AppsFolderType): Promise<Record<string, string>> {
     const folderList = await Model.folder.find({
       applicationId: { $in: params.applicationIds },
+      parentFolderId: '',
+      deleted: false,
       'tags.type': params.type,
     });
 
-    const appFolder: Record<string, string> = {};
+    const appFolderMap: Record<string, string> = {};
     _.map(folderList, (folder) => {
       if (folder.tags?.[0]?.type === params.type) {
-        appFolder[folder.applicationId] = folder.id;
+        appFolderMap[folder.applicationId] = folder.id;
       }
     });
-    return appFolder;
+
+    return appFolderMap;
+  }
+
+  /**
+   * Get application all default item folder ids
+   * @param applicationId
+   * @returns
+   */
+  async getAppDefaultItemFolderIds(applicationId: string): Promise<string[]> {
+    const folderList = await Model.folder.find({
+      applicationId: applicationId,
+      parentFolderId: '',
+      deleted: false,
+    });
+
+    return _.map(folderList, 'id');
   }
 
   /**
@@ -96,16 +126,8 @@ export class FolderInfoService extends BaseService<Folder> {
    * @returns {string[]} Promise
    */
   async getAppDefaultFolderIds(params: AppDefaultFolderSearch): Promise<Set<string>> {
-    const folderList = await Model.folder.find({
-      applicationId: { $in: params.applicationIds },
-      'tags.type': params.type,
-    });
-
-    const folderDetails = _.filter(folderList, (folder) => {
-      return folder.tags?.[0]?.type === params.type;
-    });
-
-    return new Set(_.map(folderDetails, 'id'));
+    const folderDetails = await this.getAppsTypeFolderId(params);
+    return new Set(_.values(folderDetails));
   }
 
   /**
@@ -162,11 +184,17 @@ export class FolderInfoService extends BaseService<Folder> {
    * Add folders of specified types under the application, such as items, variables, conditions, etc.
    * @param  {Folder} folderDetail
    * @param  {Record<string, number | Folder>} type
+   * @param  {Record<string, any>} distinctParams, filter same data
    * @returns Promise
    */
   async addTypeFolderDetail(
     folderDetail: Partial<Folder>,
-    options: { ctx: FoxCtx; type: AppFolderTypes },
+    options: {
+      ctx: FoxCtx;
+      type: AppFolderTypes;
+      actionDataType?: string;
+      distinctParams?: Record<string, any>;
+    },
   ): Promise<Record<string, number | Folder>> {
     // Get the folder Id of the specified type under the application
     const typeDetail = await Model.folder.findOne({
@@ -181,20 +209,29 @@ export class FolderInfoService extends BaseService<Folder> {
     }
 
     // Check if the folder is duplicate
-    const existFolder = await Model.folder.findOne({
-      applicationId: folderDetail.applicationId,
-      parentFolderId: typeDetail.id,
-      name: folderDetail.name,
-      deleted: false,
-    });
+    (!options.distinctParams || _.isEmpty(options.distinctParams)) &&
+      (options.distinctParams = { name: folderDetail.name });
+    const existFolder = await Model.folder.findOne(
+      Object.assign(
+        {
+          applicationId: folderDetail.applicationId,
+          parentFolderId: typeDetail.id,
+          deleted: false,
+        },
+        options.distinctParams,
+      ),
+    );
 
     if (existFolder) {
-      return { code: 2 };
+      return { code: 2, data: existFolder };
     }
 
     // Create folder
     folderDetail.parentFolderId = typeDetail.id;
-    const newFolderDetail = this.create(folderDetail, { ctx: options.ctx });
+    const newFolderDetail = this.create(folderDetail, {
+      ctx: options.ctx,
+      actionDataType: options.actionDataType,
+    });
 
     return { code: 0, data: newFolderDetail };
   }
@@ -207,10 +244,10 @@ export class FolderInfoService extends BaseService<Folder> {
    */
   async updateTypeFolderDetail(
     folderDetail: AppTypeFolderUpdate,
-    options: { ctx: FoxCtx },
+    options: { ctx: FoxCtx; actionType?: string },
   ): Promise<Record<string, number>> {
     // Get current folder details
-    const typeDetail = await this.model.findOne({
+    const typeDetail = await this.getDetail({
       id: folderDetail.id,
       applicationId: folderDetail.applicationId,
     });
@@ -232,14 +269,16 @@ export class FolderInfoService extends BaseService<Folder> {
       }
     }
 
-    // 更新详情
+    // update folder detail
     const updateDetail = _.omit(folderDetail, ['applicationId', 'id']);
-
     if (!_.isEmpty(updateDetail)) {
       options.ctx.transactions.push(Model.folder.updateDetailQuery(folderDetail.id, updateDetail));
+      Service.userLog.addLogItem(typeDetail, {
+        ctx: options.ctx,
+        actions: [LOG.UPDATE, options.actionType || '', TYPE.FOLDER],
+        category: { applicationId: typeDetail.applicationId, folderId: folderDetail.id },
+      });
     }
-
-    // TODO Save logs
 
     return { code: 0 };
   }
@@ -252,7 +291,6 @@ export class FolderInfoService extends BaseService<Folder> {
    */
   updateContentItem(id: string, params: Partial<Folder>, options: { ctx: FoxCtx }): void {
     options.ctx.transactions.push(Model.folder.updateDetailQuery(id, params));
-    options.ctx.operations.push(...Service.log.addLogItem(LOG.UPDATE, Object.assign({ id }, params)));
   }
 
   /**
@@ -268,7 +306,7 @@ export class FolderInfoService extends BaseService<Folder> {
     options: { ctx: FoxCtx; checkType?: number },
   ): Promise<Record<string, number>> {
     const folderDetail = await this.getDetailById(params.id);
-    if (!folderDetail) {
+    if (this.notValid(folderDetail)) {
       return { code: 1 }; // Invalid file information
     }
 
@@ -303,9 +341,17 @@ export class FolderInfoService extends BaseService<Folder> {
    * @param  {Folder[]} folderList
    * @returns void
    */
-  batchSetFolderDeleteStatus(folderList: Folder[], options: { ctx: FoxCtx; status?: boolean }): void {
-    const status = options.status === false ? false : true;
+  batchSetFolderDeleteStatus(
+    folderList: Folder[],
+    options: { ctx: FoxCtx; status?: boolean; type?: string },
+  ): void {
+    const status = !(options.status === false);
     options.ctx.transactions.push(this.setDeleteStatus(_.map(folderList, 'id'), status));
-    options.ctx.operations.push(...Service.log.addLogItem(LOG.DELETE, folderList));
+    options.ctx.operations.push(
+      ...Service.log.addLogItem(LOG.DELETE, folderList, {
+        actionType: [LOG.DELETE, options.type || TYPE.FOLDER].join('_'),
+        category: { type: TYPE.FOLDER },
+      }),
+    );
   }
 }

@@ -21,19 +21,24 @@ export class UserBase {
 
   @JSONSchema({ description: 'User Name' })
   @IsString()
-  @Length(4, 30)
+  @Length(1, 30)
   account: string;
 
   @JSONSchema({ description: 'registered email' })
   @IsEmail()
   email: string;
+
+  @JSONSchema({ description: 'User nick name' })
+  @IsString()
+  @IsOptional()
+  nickName: string;
 }
 
 export class RegisterReq {
   @JSONSchema({ description: 'User Name' })
   @IsString()
   @IsNotEmpty()
-  @Length(4, 30)
+  @Length(1, 30)
   account: string = '';
 
   @JSONSchema({ description: 'registered email' })
@@ -49,7 +54,7 @@ export class RegisterReq {
 export class RegisterResData {
   @JSONSchema({ description: 'User Name' })
   @IsString()
-  @Length(4, 30)
+  @Length(1, 30)
   account: string = '';
 
   @JSONSchema({ description: 'registered email' })
@@ -67,7 +72,7 @@ export class RegisterRes extends ResponseBase {
 export class LoginReq {
   @JSONSchema({ description: 'User Name' })
   @IsNotEmpty()
-  @Length(5, 30)
+  @Length(1, 30)
   account: string;
 
   @JSONSchema({ description: 'Password' })
@@ -125,7 +130,7 @@ export class AddUserReq {
 export class AddUserResponseDetail {
   @JSONSchema({ description: 'User Name' })
   @IsNotEmpty()
-  @Length(5, 30)
+  @Length(1, 30)
   account: string;
 
   @JSONSchema({ description: 'User mailbox' })
@@ -154,7 +159,7 @@ export class UpdateUserPassword {
 
   @JSONSchema({ description: 'User new password' })
   @IsNotEmpty()
-  @Length(5, 50)
+  @Length(1, 50)
   newPassword: string;
 }
 

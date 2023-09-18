@@ -8,11 +8,17 @@ import { FileTypes } from '@foxpage/foxpage-server-types';
 
 import { i18n } from '../../../app.config';
 import { METHOD, TYPE } from '../../../config/constant';
+import metric from '../../third-parties/metric';
 import { ComponentContentInfo } from '../../types/component-types';
 import { FoxCtx, ResData } from '../../types/index-types';
 import { AppComponentsReq, AppComponentsRes } from '../../types/validates/component-validate-types';
 import * as Response from '../../utils/response';
 import { BaseController } from '../base-controller';
+
+type ComponentCell = ComponentContentInfo & {
+  components: ComponentContentInfo[];
+  isLive?: boolean;
+};
 
 @JsonController('components')
 export class GetAppComponentList extends BaseController {
@@ -40,19 +46,73 @@ export class GetAppComponentList extends BaseController {
     try {
       ctx.logAttr = Object.assign(ctx.logAttr, { method: METHOD.GET });
 
+      metric.time('component-live-version');
       const contentList = await this.service.content.component.getComponentVersionLiveDetails({
         applicationId: params.applicationId,
         type: (params.type as FileTypes[]) || TYPE.COMPONENT,
         contentIds: params.componentIds || [],
+        loadOnIgnite: params.loadOnIgnite,
       });
+      metric.block('getComponentVersionLiveDetails', 'component-live-version');
 
-      // TODO Need to consider multiple components to obtain data; handle the returned structure
       const contentIds = _.pull(
         _.map(contentList, (content) => content?.package?.id),
         '',
         undefined,
       );
+
       const contentFileObject = await this.service.file.list.getContentFileByIds(<string[]>contentIds);
+      const componentCells = [];
+      for (let content of <any[]>contentList) {
+        // Exclude non-specified type of component data, and dependent information cannot appear non-specified component data
+        if (params.type && params.type.indexOf(contentFileObject[content?.package?.id]?.type) === -1) {
+          continue;
+        }
+
+        componentCells.push((content.package || {}) as ComponentCell);
+      }
+
+      let componentIds = this.service.content.component.getComponentResourceIds(componentCells, [
+        'browser',
+        'node',
+        'css',
+      ]);
+      const dependenciesIdVersions = this.service.component.getComponentEditorAndDependence(componentCells, [
+        'dependencies',
+      ]);
+      let dependencies = await this.service.component.getComponentDetailByIdVersion(dependenciesIdVersions);
+      const dependenceList = _.toArray(dependencies);
+      const dependComponentIds = this.service.content.component.getComponentResourceIds(
+        _.map(dependenceList, 'content'),
+        ['browser', 'node', 'css'],
+      );
+
+      componentIds = componentIds.concat(dependComponentIds);
+
+      metric.time('component-resource');
+      const [resourceObject, contentAllParents, dependFileContentObject] = await Promise.all([
+        this.service.content.resource.getResourceContentByIds(componentIds),
+        this.service.content.list.getContentAllParents(componentIds),
+        this.service.file.list.getContentFileByIds(_.map(dependenceList, 'contentId')),
+      ]);
+      metric.block('getComponentResources', 'component-resource');
+
+      const appResource = await this.service.application.getAppResourceFromContent(contentAllParents);
+      const contentResource = this.service.content.info.getContentResourceTypeInfo(
+        appResource,
+        contentAllParents,
+      );
+
+      this.service.component.addNameToEditorAndDepends(componentCells, dependFileContentObject);
+      dependenceList.forEach((depend) => {
+        depend.content.resource = this.service.version.component.assignResourceToComponent(
+          depend?.content?.resource || {},
+          resourceObject,
+          { contentResource },
+        );
+      });
+
+      let dependenceObject = _.keyBy(dependenceList, 'contentId');
 
       let components: ComponentContentInfo[] = [];
       for (let content of <any[]>contentList) {
@@ -61,91 +121,44 @@ export class GetAppComponentList extends BaseController {
           continue;
         }
 
-        const componentCell = (content.package || {}) as ComponentContentInfo & {
-          components: ComponentContentInfo[];
-          isLive?: boolean;
-        };
-        let componentIds = this.service.content.component.getComponentResourceIds([componentCell]);
-        const dependenciesIdVersions = this.service.component.getComponentEditorAndDependends([
-          componentCell,
-        ]);
-
-        const dependencies = await this.service.component.getComponentDetailByIdVersion(
-          dependenciesIdVersions,
-        );
-
-        const dependComponentIds = this.service.content.component.getComponentResourceIds(
-          _.map(_.toArray(dependencies), 'content'),
-        );
-
-        componentIds = componentIds.concat(dependComponentIds);
-
-        const [resourceObject, contentAllParents] = await Promise.all([
-          this.service.content.resource.getResourceContentByIds(componentIds),
-          this.service.content.list.getContentAllParents(componentIds),
-        ]);
-
-        const appResource = await this.service.application.getAppResourceFromContent(contentAllParents);
-        const contentResource = this.service.content.info.getContentResourceTypeInfo(
-          appResource,
-          contentAllParents,
-        );
-
+        const componentCell = (content.package || {}) as ComponentCell;
         componentCell.resource = this.service.version.component.assignResourceToComponent(
           componentCell.resource || {},
           resourceObject,
           { contentResource },
         );
 
-        componentCell.type = 'component';
+        componentCell.resource['editor-entry'] = [];
+        componentCell.type = contentFileObject[content?.package?.id]?.type;
         componentCell.name = content.name;
         componentCell.version = <string>content.version;
-        componentCell.components = [];
-        // The default setting, you need to replace it from other returned data later
         componentCell.isLive = true;
+        componentCell.schema = '';
+        componentCell.components = [];
 
-        // Attach the resource details of the dependent component to the component
-        const dependenciesList = _.toArray(dependencies);
-        if (dependenciesList.length > 0) {
-          const fileContentObject = await this.service.file.list.getContentFileByIds(
-            _.map(dependenciesList, 'contentId'),
-          );
-
-          // Append the name of the dependency to dependencies
-          this.service.component.addNameToEditorAndDepends([componentCell], fileContentObject);
-          dependenciesList.forEach((depend) => {
-            this.service.component.addNameToEditorAndDepends([depend.content], fileContentObject);
-            depend.content.resource = this.service.version.component.assignResourceToComponent(
-              depend?.content?.resource || {},
-              resourceObject,
-              { contentResource },
+        if (componentCell.resource.dependencies && componentCell.resource.dependencies.length > 0) {
+          componentCell.resource.dependencies.forEach((depend) => {
+            componentCell.components.push(
+              Object.assign(
+                {
+                  id: depend.id,
+                  name: dependFileContentObject?.[depend.id]?.name || '',
+                  versionId: dependenceObject[depend.id]?.id,
+                  version: dependenceObject[depend.id]?.version,
+                },
+                dependenceObject[depend.id]?.content || {},
+                { schema: {} },
+              ) as ComponentContentInfo,
             );
           });
-
-          for (const depend of dependenciesList) {
-            if (
-              !params.type ||
-              params.type.length === 0 ||
-              params.type.indexOf(fileContentObject?.[depend.contentId]?.type) !== -1
-            ) {
-              componentCell.components.push(
-                Object.assign(
-                  {
-                    name: fileContentObject?.[depend.contentId]?.name || '',
-                    id: depend.contentId,
-                    versionId: depend.id,
-                    version: depend.version || '',
-                  },
-                  depend?.content || {},
-                ) as ComponentContentInfo,
-              );
-            }
-          }
         }
 
         // Guarantee to return id and name fields
         componentCell && components.push(componentCell);
       }
+
+      // send metric
+      components.length === 0 && metric.empty(ctx.request.url, params.applicationId);
 
       return Response.success(components, 1110801);
     } catch (err) {

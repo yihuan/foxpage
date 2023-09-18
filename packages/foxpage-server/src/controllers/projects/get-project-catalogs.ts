@@ -38,7 +38,7 @@ export class GetProjectCatalog extends BaseController {
       // Get project information
       const projectDetail = await this.service.folder.info.getDetail(_.pick(params, ['id', 'applicationId']));
 
-      if (!projectDetail) {
+      if (this.notValid(projectDetail)) {
         return Response.warning(i18n.project.invalidProjectId, 2040501);
       }
 
@@ -46,7 +46,7 @@ export class GetProjectCatalog extends BaseController {
         folderIds: [params.id],
         depth: 5,
         hasContent: true,
-        fileTypes: [TYPE.TEMPLATE, TYPE.PAGE],
+        fileTypes: [TYPE.TEMPLATE, TYPE.PAGE, TYPE.BLOCK],
       });
 
       if (folderFiles[params.id] && folderFiles[params.id].files.length > 0) {

@@ -1,8 +1,9 @@
+import _ from 'lodash';
 import { FoxCtx } from 'src/types/index-types';
 
 import { Content, ContentVersion } from '@foxpage/foxpage-server-types';
 
-import { LOG, VERSION } from '../../../config/constant';
+import { LOG, TYPE, VERSION } from '../../../config/constant';
 import * as Model from '../../models';
 import { AppTypeContent, ContentVersionNumber, LiveContentVersion } from '../../types/content-types';
 import { BaseService } from '../base-service';
@@ -47,9 +48,14 @@ export class ContentLiveService extends BaseService<Content> {
       return [];
     }
 
+    const contentList = await this.getDetailByIds(contentIds);
+    const contentLiveIds = _.map(
+      _.filter(contentList, (content) => content.liveVersionId),
+      'liveVersionId',
+    );
+
     // Get live details
-    const contentLiveInfo = await Service.content.list.getContentLiveInfoByIds(contentIds);
-    return Service.version.list.getContentInfoByIdAndNumber(contentLiveInfo);
+    return Service.version.list.getVersionListChunk(contentLiveIds);
   }
 
   /**
@@ -60,33 +66,37 @@ export class ContentLiveService extends BaseService<Content> {
    */
   async setLiveVersion(
     params: LiveContentVersion,
-    options: { ctx: FoxCtx },
+    options: { ctx: FoxCtx; force?: boolean; actionType?: string },
   ): Promise<Record<string, number | string>> {
     const versionDetail = await Service.version.info.getDetail({
       contentId: params.id,
       versionNumber: params.versionNumber,
     });
 
-    if (!versionDetail || versionDetail.deleted) {
+    if (this.notValid(versionDetail)) {
       return { code: 1 }; // Invalid version information
     }
 
-    if (versionDetail.status !== VERSION.STATUS_RELEASE) {
+    if (!options.force && versionDetail.status !== VERSION.STATUS_RELEASE) {
       return { code: 2 }; // Not in release state
     }
 
     // Verify content details
-    const [result, contentDetail] = await Promise.all([
+    const [result, contentDetail, validateResult] = await Promise.all([
       Service.version.relation.getVersionRelationAndComponents(params.applicationId, versionDetail.content),
       Service.content.info.getDetailById(versionDetail.contentId),
+      Service.version.check.versionCanPublish(versionDetail.id),
     ]);
 
-    if (result.code === 0) {
-      this.setLiveContent(versionDetail.contentId, versionDetail.versionNumber, {
+    if (result.code === 0 && validateResult.publishStatus) {
+      this.setLiveContent(versionDetail.contentId, versionDetail.versionNumber, versionDetail.id, {
         ctx: options.ctx,
         content: contentDetail,
+        actionType: options.actionType,
       });
       return { code: 0 };
+    } else if (validateResult.publishStatus) {
+      return { code: 4, data: JSON.stringify(validateResult) };
     } else {
       return { code: 3, data: JSON.stringify(result) };
     }
@@ -102,12 +112,21 @@ export class ContentLiveService extends BaseService<Content> {
   setLiveContent(
     contentId: string,
     versionNumber: number,
-    options: { ctx: FoxCtx; content?: Content },
+    versionId: string,
+    options: { ctx: FoxCtx; content?: Content; actionType?: string },
   ): void {
-    options.ctx.transactions.push(this.updateDetailQuery(contentId, { liveVersionNumber: versionNumber }));
+    options.ctx.transactions.push(
+      this.updateDetailQuery(contentId, { liveVersionNumber: versionNumber, liveVersionId: versionId }),
+    );
     options.ctx.operations.push(
       ...Service.log.addLogItem(LOG.LIVE, options.content || ({} as Content), {
-        fileId: options.content?.fileId,
+        actionType: options.actionType || [LOG.LIVE, TYPE.CONTENT].join('_'),
+        category: {
+          type: TYPE.CONTENT,
+          fileId: options.content?.fileId as string,
+          contentId,
+          versionId,
+        },
       }),
     );
   }

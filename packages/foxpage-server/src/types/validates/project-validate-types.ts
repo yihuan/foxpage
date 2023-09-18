@@ -25,6 +25,12 @@ export class AddProjectDetailReq {
   @Length(0, 100)
   name: string;
 
+  @JSONSchema({ description: 'Organization ID' })
+  @IsString()
+  @IsOptional()
+  @Length(20, 20)
+  organizationId: string;
+
   @JSONSchema({ description: 'Project Introduction' })
   @IsString()
   @IsOptional()
@@ -113,8 +119,19 @@ export class ProjectDetailRes extends FolderDetailRes {}
 export class ProjectListReq {
   @JSONSchema({ description: 'Organization ID' })
   @IsString()
+  @IsOptional()
   @Length(20, 20)
   organizationId: string;
+
+  @JSONSchema({ description: 'Project type, user, involve, team, organization, default is organization' })
+  @IsString()
+  @IsOptional()
+  type: string;
+
+  @JSONSchema({ description: 'Target type project, if type is team, then typeId is team id' })
+  @IsString()
+  @IsOptional()
+  typeId: string;
 
   @JSONSchema({ description: 'Application ID' })
   @IsString()
@@ -122,7 +139,12 @@ export class ProjectListReq {
   @IsOptional()
   applicationId: string;
 
-  @JSONSchema({ description: 'Filter fields, currently only filter by organization name' })
+  @JSONSchema({ description: 'Filter fields, search project or file info, project|file' })
+  @IsString()
+  @IsOptional()
+  searchType: string;
+
+  @JSONSchema({ description: 'Filter fields, organization name, project name or id, file name or id' })
   @IsString()
   @IsOptional()
   search: string;
@@ -193,12 +215,11 @@ export class ProjectPageDetail {
 export class ProjectScopeTypeReq {
   @JSONSchema({ description: 'Application ID' })
   @IsString()
-  @Length(20, 20)
   applicationId: string;
 
   @JSONSchema({ description: 'Project ID', default: 'Project ID/Folder ID' })
   @IsString()
-  @Length(20, 20)
+  @IsOptional()
   id: string;
 
   @JSONSchema({ description: 'Search field, name' })
@@ -266,6 +287,11 @@ export class ProjectDeleteReq {
 }
 
 export class WorkspaceProjectListReq {
+  @JSONSchema({ description: 'Organization id' })
+  @IsString()
+  @Length(20, 20)
+  organizationId: string;
+
   @JSONSchema({ description: 'Filter fields, currently only filter by organization name' })
   @IsString()
   @IsOptional()
@@ -283,3 +309,19 @@ export class WorkspaceProjectListReq {
   @IsOptional()
   size: number;
 }
+
+export class AddProjectRelationsReq {
+  @JSONSchema({ description: 'Application ID' })
+  @IsString()
+  applicationId: string;
+
+  @JSONSchema({ description: 'Target content ID' })
+  @IsString()
+  contentId: string;
+
+  @JSONSchema({ description: 'Relation and schema in DSL' })
+  @IsObject()
+  relationSchemas: any;
+}
+
+export class AddProjectRelationsRes {}

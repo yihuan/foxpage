@@ -1,44 +1,56 @@
-import { BaseResponse } from '@/types/common';
-import { FileTag, PaginationReqParams, ProjectFileType } from '@/types/index';
+import {
+  CommonFetchParams,
+  File,
+  FileScope,
+  PaginationReqParams,
+  ParentFile,
+  ProjectFile,
+  ResponseBody,
+} from '@foxpage/foxpage-client-types';
 
-export interface ProjectFileSearchParams extends PaginationReqParams {
-  applicationId: string;
+export interface ProjectFileListFetchParams extends Omit<CommonFetchParams, 'organizationId' | 'id'> {
   folderId: string;
 }
 
-export interface ProjectFileSaveParams {
-  folderId: string;
-  applicationId: string;
+export type ProjectFileAddParams = Pick<ProjectFile, 'applicationId' | 'folderId' | 'id'> &
+  Pick<File, 'name' | 'suffix' | 'tags'>;
+
+export interface ProjectFileSaveParams extends Pick<ProjectFile, 'applicationId' | 'folderId'> {
+  name?: string;
 }
 
-export interface ProjectFileDeleteParams extends ProjectFileSaveParams {
-  id: string;
-}
+export type ProjectFileDeleteParams = Pick<ProjectFile, 'applicationId' | 'folderId' | 'id'>;
 
-export interface ProjectFileDeleteReqParams {
-  id: string;
-  applicationId: string;
+export interface ProjectFileDeleteReqParams extends Pick<ProjectFile, 'applicationId' | 'id'> {
   status: boolean;
 }
 
-export interface ProjectFileDetailFetchResponse extends ResponseBody {
-  data?: ProjectFileType[];
+export type ProjectFileFetchParams = Pick<ProjectFile, 'applicationId' | 'id'> & PaginationReqParams;
+
+export interface ProjectFileFetchResponse extends ResponseBody {
+  data: File[];
 }
 
-export interface ProjectFileAddParams {
-  id: string;
-  applicationId: string;
-  name: string;
-  folderId: string;
-  suffix: string;
-  tags: FileTag[];
+export type ParentFileFetchParams = Pick<ProjectFile, 'id' | 'applicationId'>;
+
+export interface ParentFileFetchResponse extends ResponseBody {
+  data: ParentFile[];
 }
 
-export interface ProjectFileFetchParams extends PaginationReqParams {
-  id: string;
-  applicationId: string;
+export interface FilesFetchParams extends Pick<ProjectFile, 'applicationId'> {
+  ids: string[];
 }
 
-export interface ProjectFileFetchResponse extends BaseResponse {
-  data: ProjectFileType[];
+export interface FilesFetchedResponse extends ResponseBody {
+  data?: File[];
+}
+
+// application all file
+export type ApplicationFileListFetchParams = Pick<ProjectFile, 'applicationId'> &
+  PaginationReqParams & {
+    scope?: FileScope;
+  };
+
+export interface ApplicationFileUpdateParams extends Pick<ApplicationFileListFetchParams, 'applicationId'> {
+  file: File;
 }

@@ -1,9 +1,8 @@
-import { getLeadingCommentRanges } from 'typescript';
-
 export type ContentBaseStatus = 'base';
 export type ContentDiscardStatus = 'discard';
 export type ContentAlphaStatus = 'alpha';
 export type ContentBetaStatus = 'beta';
+export type ContentCanaryStatus = 'canary';
 export type ContentReleaseStatus = 'release';
 export type ContentReleaseCandidateStatus = 'releaseCandidate';
 
@@ -13,6 +12,7 @@ export type ContentStatus =
   | ContentDiscardStatus
   | ContentAlphaStatus
   | ContentBetaStatus
+  | ContentCanaryStatus
   | ContentReleaseStatus
   | ContentReleaseCandidateStatus;
 
@@ -37,9 +37,12 @@ export interface AppResource {
 }
 
 export interface AppSetting {
-  preview: {
-    host: string;
-  };
+  [index: string]: any[];
+}
+
+export interface AppHost {
+  url: string;
+  locales: string[];
 }
 
 // Application
@@ -47,7 +50,7 @@ export interface Application extends CommonFields {
   name: string;
   intro: string;
   organizationId: string;
-  host?: string[];
+  host?: AppHost[];
   slug?: string;
   locales: string[];
   resources: AppResource[];
@@ -60,6 +63,7 @@ export interface Authorize extends CommonFields {
   targetId: string;
   mask: number;
   allow: boolean;
+  relation?: Record<string, any>;
 }
 
 export interface SchemaDirective {
@@ -77,7 +81,10 @@ export interface DslSchemas {
   children?: DslSchemas[];
   disable?: boolean;
   directive?: SchemaDirective;
-  parentId?: string;
+  extension?: {
+    parentId?: string;
+    extendId?: string;
+  };
   wrapper?: string;
   props?: Record<string, any>;
   style?: Record<string, any>;
@@ -126,6 +133,7 @@ export interface DSL {
   schemas: DslSchemas[];
   relation: Record<string, DslRelation>;
   version?: string;
+  extension?: Record<string, string>;
 }
 
 export interface ComponentDSL {
@@ -149,12 +157,21 @@ export interface TypeFileDSL {
   relation: Record<string, Record<string, string>>;
 }
 
-// TODO content type needs to be defined Content version
+export interface PicType {
+  url: string;
+  type: string;
+  sort?: number;
+}
+
 export interface CommonContentVersion extends CommonFields {
   contentId: string;
   version: string;
   versionNumber: number;
+  dslVersion?: string;
   status?: ContentStatus;
+  pictures?: PicType[];
+  operator?: Record<string, any>;
+  contentUpdateTime?: Date | string;
 }
 
 export interface ContentVersion extends CommonContentVersion {
@@ -188,7 +205,10 @@ export interface Content extends CommonFields {
   title: string;
   tags: Tag[];
   fileId: string;
+  applicationId: string;
   liveVersionNumber: number;
+  liveVersionId?: string;
+  type?: string;
 }
 
 export type FilePageType = 'page';
@@ -225,6 +245,9 @@ export interface File extends CommonFields {
   folderId: string;
   type: FileTypes;
   suffix: string;
+  subType?: string;
+  componentType?: string;
+  extension?: Record<string, any>;
   intro?: string;
   tags?: any[];
 }
@@ -272,6 +295,7 @@ export interface User {
   deleted: boolean;
   id?: string;
   changePwdStatus?: boolean;
+  defaultOrganizationId?: string;
   createTime?: Date;
   updateTime?: Date;
 }
@@ -316,8 +340,17 @@ export interface StoreOrdersCustomer {
 }
 
 export interface LogCategory {
-  id: string;
   type: LogCategoryType;
+  applicationId: string;
+  applicationName: string;
+  folderId?: string;
+  folderName?: string;
+  fileId?: string;
+  fileName?: string;
+  contentId?: string;
+  contentName?: string;
+  versionId?: string;
+  version?: string;
 }
 
 // Here before, after includes all data types
@@ -336,12 +369,55 @@ export interface LogContent {
 export interface Log {
   id: string;
   action: LogActionType;
+  actionType: string;
   operator: string;
   category: LogCategory;
   content: LogContent;
   createTime?: Date;
   updateTime?: Date;
   deleted: boolean;
+}
+
+export interface ContentLog {
+  id: string;
+  action: string;
+  actionType?: string;
+  category: Record<string, string>;
+  content: { id: string; type: string; content: any }[];
+  creator: string;
+  createTime?: Date;
+  updateTime?: Date;
+}
+
+export interface UserLog {
+  id: string;
+  transactionId: string;
+  actionType: string;
+  category: Record<string, string>;
+  content: { id: string; type: string; content: any }[];
+  creator: string;
+  createTime?: Date;
+  updateTime?: Date;
+}
+
+export interface PicCategory {
+  applicationId: string;
+  folderId?: string;
+  fileId?: string;
+  contentId?: string;
+  locales?: string[];
+}
+
+export interface Picture {
+  id: string;
+  name: string;
+  category: PicCategory;
+  tags?: Record<string, any>[];
+  url: string;
+  creator: string;
+  deleted: boolean;
+  createTime?: Date;
+  updateTime?: Date;
 }
 
 // Log operation type
@@ -394,6 +470,7 @@ export type AppComponentType = 'component';
 export type AppLibraryType = 'library';
 export type AppResourceType = 'resource';
 export type AppFunctionType = 'function';
+export type AppSettingType = 'app_setting';
 export type AppFolderTypes =
   | AppProjectType
   | AppVariableType
@@ -401,7 +478,8 @@ export type AppFolderTypes =
   | AppComponentType
   | AppLibraryType
   | AppResourceType
-  | AppFunctionType;
+  | AppFunctionType
+  | AppSettingType;
 
 export type LangEn = 'en';
 export type LangCn = 'cn';

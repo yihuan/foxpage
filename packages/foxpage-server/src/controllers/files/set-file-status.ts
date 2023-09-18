@@ -12,6 +12,8 @@ import { DeleteFileReq, FileDetailRes } from '../../types/validates/file-validat
 import * as Response from '../../utils/response';
 import { BaseController } from '../base-controller';
 
+// TODO: need to check offline
+
 @JsonController('file')
 export class SetFileStatus extends BaseController {
   constructor() {
@@ -41,9 +43,17 @@ export class SetFileStatus extends BaseController {
         return Response.accessDeny(i18n.system.accessDeny, 4170501);
       }
 
-      const fileDetail = await this.service.file.info.getDetailById(params.id);
-      if (!fileDetail) {
+      const [fileDetail, hasLiveContentFileIds] = await Promise.all([
+        this.service.file.info.getDetailById(params.id),
+        this.service.file.check.checkFileHasLiveContent([params.id]),
+      ]);
+      if (this.notValid(fileDetail)) {
         return Response.warning(i18n.file.invalidFileId, 2170501);
+      }
+
+      // check delete status
+      if (hasLiveContentFileIds.length > 0) {
+        return Response.warning(i18n.page.pageContentHasLiveChildren, 2170502);
       }
 
       // Set status

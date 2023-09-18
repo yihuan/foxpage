@@ -4,10 +4,11 @@ import _ from 'lodash';
 import { Body, Ctx, JsonController, Post } from 'routing-controllers';
 import { OpenAPI, ResponseSchema } from 'routing-controllers-openapi';
 
-import { Content, ContentVersion, DSL, File, Tag } from '@foxpage/foxpage-server-types';
+import { Content, ContentVersion, DSL, File } from '@foxpage/foxpage-server-types';
 
 import { i18n } from '../../../app.config';
-import { METHOD } from '../../../config/constant';
+import { DSL_VERSION, METHOD } from '../../../config/constant';
+import metric from '../../third-parties/metric';
 import {
   RelationAssocContent,
   RelationContentInfo,
@@ -56,13 +57,12 @@ export class GetTagContentInfo extends BaseController {
     try {
       ctx.logAttr = Object.assign(ctx.logAttr, { method: METHOD.GET });
 
-      const tags = (params.tags || []) as Tag[];
-      if (tags.length === 0) {
-        return Response.warning(i18n.content.tagsCannotBeEmpty, 2160501);
-      }
+      !params.tags && (params.tags = []);
 
       // Get qualified content details
+      metric.time('app-content-tags');
       const contentVersionList = await this.service.content.tag.getAppContentByTags(params);
+      metric.block('getAppContentByTags', 'app-content-tags');
 
       // Return empty results
       if (contentVersionList.length === 0) {
@@ -80,10 +80,12 @@ export class GetTagContentInfo extends BaseController {
 
       let contentList: Content[] = [];
       let relationDetails: Record<string, RelationAssocContent> = {};
+      metric.time('relation-detail');
       [contentList, relationDetails] = await Promise.all([
         this.service.content.info.getDetailByIds(contentIds),
         this.service.version.relation.getRelationDetail(relationObject),
       ]);
+      metric.block('getRelationDetail', 'relation-detail');
 
       const contentFileIds = _.map(contentList, 'fileId');
       let contentFileObject: Record<string, File>;
@@ -111,21 +113,47 @@ export class GetTagContentInfo extends BaseController {
               : '')
           );
 
-          contentInfo[content.id] = { pages: [contentVersionObject[content.id]?.content] as DSL[] };
+          contentInfo[content.id] = {
+            pages: [
+              Object.assign({}, contentVersionObject[content.id]?.content, {
+                dslVersion: contentVersionObject[content.id]?.dslVersion || DSL_VERSION,
+                name: content.title,
+                version: contentVersionObject[content.id]?.version,
+                versionNumber: this.service.version.number.createNumberFromVersion(
+                  contentVersionObject[content.id]?.version || '0.0.1',
+                ),
+                fileId: content.fileId,
+                extension: this.service.content.tag.getTagsByKeys(content.tags, ['extendId', 'mockId']),
+              }),
+            ] as DSL[],
+          };
 
           if (fileType) {
             !contentInfo[content.id][fileType] && (contentInfo[content.id][fileType] = []);
-            contentInfo[content.id][fileType]?.push(versionObject[relation.id]?.content || undefined);
+            contentInfo[content.id][fileType]?.push(
+              Object.assign({}, versionObject[relation.id]?.content || undefined, {
+                name: contentObject[relation.id]?.title,
+                version: versionObject[relation.id]?.version,
+                versionNumber: this.service.version.number.createNumberFromVersion(
+                  versionObject[relation.id]?.version || '0.0.1',
+                ),
+                fileId: contentObject[relation.id]?.fileId,
+              }),
+            );
           }
         });
 
-        contentInfo[content.id].files = (contentFileObject[content.fileId]
-          ? [contentFileObject[content.fileId]]
-          : []) as File[];
+        contentInfo[content.id].files = (
+          contentFileObject[content.fileId] ? [contentFileObject[content.fileId]] : []
+        ) as File[];
 
         tagContentList.push({ content: content, contentInfo: contentInfo[content.id] || {} });
       });
-      return Response.success(tagContentList, 1160501);
+
+      // send metric
+      tagContentList.length === 0 && metric.empty(ctx.request.url, params.applicationId);
+
+      return Response.success(tagContentList, 1160502);
     } catch (err) {
       return Response.error(err, i18n.content.getContentListFailed, 3160501);
     }

@@ -12,17 +12,20 @@ let params = {
   applicationId: Data.app.id,
   name: '@foxpage/component-name',
   type: 'component',
+  componentType: '',
 };
 
 beforeEach(() => {
   ctx.logAttr = { transactionId: '' };
   ctx.operations = [];
   ctx.transactions = [];
+  ctx.userLogs = [];
 
   params = {
     applicationId: Data.app.id,
     name: '@foxpage/component-name',
     type: 'component',
+    componentType: '',
   };
 });
 

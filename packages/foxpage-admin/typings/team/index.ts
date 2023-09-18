@@ -1,48 +1,41 @@
-import { Creator, OptionsAction, OrganizationUser, PaginationReqParams, ResponseBody } from '@/types/index';
+import {
+  CommonDeleteParams,
+  CommonFetchParams,
+  PaginationReqParams,
+  ResponseBody,
+  TeamEntity,
+  TeamMemberEntity,
+} from '@foxpage/foxpage-client-types';
 
-export interface Team {
-  id: string;
-  name: string;
-  members: OrganizationUser[];
-  creator: Creator;
-  createTime: string;
-  updateTime: string;
+// team list
+export interface TeamsFetchParams extends CommonFetchParams {}
+
+export interface TeamsFetchResponse extends ResponseBody {
+  data?: TeamEntity[];
 }
 
-export interface TeamFetchParams {
-  organizationId: string;
-  page: number;
-  size: number;
-}
-export interface TeamFetchResponse extends ResponseBody {
-  data?: Team[];
-}
-
-export interface TeamAddParams {
-  organizationId: string;
-  name: string;
-}
-
-export interface TeamUpdateParams {
+declare interface TeamsCommonParams extends Pick<TeamEntity, 'name' | 'organizationId'> {
   teamId: string;
-  name: string;
 }
 
-export interface TeamDeleteParams {
-  teamId: string;
-  status: boolean;
+// team self
+export type TeamAddParams = Pick<TeamsCommonParams, 'organizationId' | 'name'>;
+
+export type TeamUpdateParams = Pick<TeamsCommonParams, 'teamId' | 'name'>;
+
+export type TeamDeleteParams = Pick<TeamsCommonParams, 'teamId'> & Pick<CommonDeleteParams, 'status'>;
+
+export interface TeamSaveParams extends Pick<TeamsCommonParams, 'organizationId'> {
+  team: TeamEntity;
 }
 
-export interface TeamUsersAddReqParams {
-  teamId: string;
+// team user
+export type TeamMembersFetchParams = Pick<TeamsCommonParams, 'teamId'> & PaginationReqParams;
+
+export interface TeamMembersUpdateParams extends Pick<TeamsCommonParams, 'teamId'> {
   userIds: string[];
 }
 
-export interface TeamUsersAddParams extends OptionsAction {
-  teamId: string;
-  users: OrganizationUser[];
-}
-
-export interface TeamUsersFetchParams extends PaginationReqParams {
-  teamId: string;
+export interface TeamMembersParams extends Pick<TeamsCommonParams, 'teamId'> {
+  users: TeamMemberEntity[];
 }

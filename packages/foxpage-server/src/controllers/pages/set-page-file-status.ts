@@ -1,31 +1,32 @@
 import 'reflect-metadata';
 
-import _ from 'lodash';
 import { Body, Ctx, JsonController, Put } from 'routing-controllers';
 import { OpenAPI, ResponseSchema } from 'routing-controllers-openapi';
 
 import { File } from '@foxpage/foxpage-server-types';
 
 import { i18n } from '../../../app.config';
-import { METHOD, TYPE } from '../../../config/constant';
+import { LOG, METHOD } from '../../../config/constant';
 import { FoxCtx, ResData } from '../../types/index-types';
 import { AppContentStatusReq } from '../../types/validates/content-validate-types';
 import { FileDetailRes } from '../../types/validates/file-validate-types';
 import * as Response from '../../utils/response';
 import { BaseController } from '../base-controller';
 
-@JsonController('pages')
+@JsonController()
 export class SetPageFileStatus extends BaseController {
   constructor() {
     super();
   }
 
   /**
-   * set page delete status
+   * set the delete status in page, template and block
    * @param  {AppContentStatusReq} params
    * @returns {Content}
    */
-  @Put('/status')
+  @Put('pages/status')
+  @Put('templates/status')
+  @Put('blocks/status')
   @OpenAPI({
     summary: i18n.sw.setPageFileStatus,
     description: '',
@@ -37,21 +38,42 @@ export class SetPageFileStatus extends BaseController {
     params.status = true; // Currently it is mandatory to only allow delete operations
 
     try {
-      ctx.logAttr = Object.assign(ctx.logAttr, { method: METHOD.DELETE, type: TYPE.PAGE });
-      const hasAuth = await this.service.auth.file(params.id, { ctx, mask: 4 });
+      const apiType = this.getRoutePath(ctx.request.url);
+
+      ctx.logAttr = Object.assign(ctx.logAttr, { method: METHOD.DELETE, type: apiType });
+      let [hasAuth, fileDetail] = await Promise.all([
+        this.service.auth.file(params.id, { ctx }),
+        this.service.file.info.getDetailById(params.id),
+      ]);
+
+      if (this.notValid(fileDetail)) {
+        return Response.warning(i18n.page.invalidPageId, 2051201);
+      }
+
       if (!hasAuth) {
         return Response.accessDeny(i18n.system.accessDeny, 4051201);
       }
 
-      const result = await this.service.file.info.setFileDeleteStatus(params, { ctx });
+      // check delete status
+      const hasLiveContentFileIds = await this.service.file.check.checkFileHasLiveContent([params.id]);
+      if (hasLiveContentFileIds.length > 0) {
+        return Response.warning(i18n.page.pageContentHasLiveChildren, 2051202);
+      }
+
+      const result = await this.service.file.info.setFileDeleteStatus(params, {
+        ctx,
+        actionType: [LOG.DELETE, apiType].join('_'),
+      });
       if (result.code === 1) {
-        return Response.warning(i18n.file.invalidFileId, 2051201);
+        return Response.warning(i18n.file.invalidFileId, 2051203);
       } else if (result.code === 2) {
-        return Response.warning(i18n.page.fileCannotBeDeleted, 251202);
+        return Response.warning(i18n.page.fileCannotBeDeleted, 2051204);
       }
 
       await this.service.file.info.runTransaction(ctx.transactions);
-      const fileDetail = await this.service.file.info.getDetailById(params.id);
+      fileDetail = await this.service.file.info.getDetailById(params.id);
+
+      this.service.relation.removeVersionRelations({ fileIds: [params.id] });
 
       return Response.success(fileDetail, 4151201);
     } catch (err) {

@@ -1,22 +1,26 @@
 import {
   AppFolderTypes,
   AppResource,
-  ContentVersion,
+  Content,
+  DSL,
   File,
   FileTypes,
   Folder,
   Tag,
 } from '@foxpage/foxpage-server-types';
 
-import { AppBaseInfo } from './app-types';
 import { ContentInfo } from './content-types';
-import { Creator, FoxCtx } from './index-types';
+import { Creator, FoxCtx, IdName, Search } from './index-types';
+import { UserBase } from './user-types';
 
 export type FolderInfo = Exclude<Folder, 'creator' | 'applicationId'> & { creator: Creator } & {
-  application: AppBaseInfo;
+  application: IdName;
+  organization?: IdName;
 };
 export type FileInfo = Exclude<File, 'creator' | 'applicationId'> & { creator: Creator } & {
-  application: AppBaseInfo;
+  application: IdName;
+  hasContent?: boolean;
+  hasLiveContent?: boolean;
 };
 export type FileFolderInfo = { folders: FolderInfo[]; files: FileInfo[] };
 export type FolderUserInfo = Exclude<Folder, 'creator'> & { creator: Creator };
@@ -31,11 +35,17 @@ export type FileContent = File & { content?: any; contentId?: string };
 export type FileContentInfo = File & { contents?: ContentInfo[] };
 export type FileFolderContentChildren = { folders: FolderChildren[]; files: FileContent[] };
 export type FolderResourceGroup = Folder & { groups: AppResource };
+export type FileContents = File & { contents: Content[] };
 export type FileAssoc = FileUserInfo & {
   folderName: string;
-  content: ContentVersion;
+  content: DSL;
+  application?: IdName;
   contentId?: string;
   online?: boolean;
+  version?: {
+    base?: string;
+    live?: string;
+  };
 };
 export type FilePathSearch = FolderPathSearch & { fileName: string };
 export type FilePageSearch = Exclude<FolderPageSearch, 'parentFolderId'> & {
@@ -44,7 +54,7 @@ export type FilePageSearch = Exclude<FolderPageSearch, 'parentFolderId'> & {
   sort?: Record<string, number>;
 };
 
-export type FileWithOnline = File & { online: boolean };
+export type FileWithOnline = _.Omit<File, 'creator'> & { online: boolean; creator: UserBase };
 
 export type ResourceFolderChildren = Folder & {
   newVersion?: NewResourceDetail;
@@ -59,6 +69,8 @@ export type ResourceFolderContentChildren = {
 export interface AppFileType {
   applicationId: string;
   type: string | string[];
+  search?: string;
+  loadOnIgnite?: boolean | undefined;
 }
 
 export interface FileCheck {
@@ -85,14 +97,12 @@ export interface FolderPageSearch {
   to?: number;
 }
 
-export interface WorkspaceFolderSearch {
+export interface WorkspaceFolderSearch extends Search {
   creator: string;
   types: string[];
-  deleted?: boolean;
+  organizationId?: string;
+  applicationIds?: string[];
   sort?: Record<string, number>;
-  search?: string;
-  page?: number;
-  size?: number;
 }
 
 export interface FileNameSearch {
@@ -113,21 +123,25 @@ export interface ResourceSearch {
   name?: string;
 }
 
-export interface AppFolderSearch {
-  deleted?: boolean;
-  search?: string;
-  page?: number;
-  size?: number;
+export interface AppFolderSearch extends Search {
   parentFolderId?: string;
   parentFolderIds?: string[];
 }
 
-export interface FolderChildrenSearch {
-  parentFolderIds: string[];
-  search?: string;
-  page?: number;
-  size?: number;
+export interface FolderChildrenSearch extends Search {
+  types?: string[];
+  applicationIds?: string[];
+  organizationId?: string;
+  folderIds?: string[];
+  userIds?: string[];
+  searchType?: string;
   sort?: Record<string, number>;
+}
+
+export interface UserFileFolderSearch extends Search {
+  types?: string[];
+  userId?: string;
+  applicationIds?: string[];
 }
 
 export interface AppFolderSearchByName {
@@ -167,6 +181,8 @@ export interface NewFileInfo {
   name: string;
   applicationId: string;
   type: FileTypes;
+  subType?: string;
+  componentType?: string;
   creator?: string;
   folderId?: string;
   suffix?: string;
@@ -175,13 +191,9 @@ export interface NewFileInfo {
   content?: any;
 }
 
-export interface FileListSearch {
+export interface FileListSearch extends Search {
   applicationId: string;
   id: string;
-  deleted?: boolean;
-  search?: string;
-  page?: number;
-  size?: number;
 }
 
 export interface ProjectPageContent {
@@ -206,6 +218,8 @@ export interface AppTypeFileParams {
   applicationId: string;
   type: string;
   deleted: boolean;
+  scope?: string;
+  scopeId?: string;
   search?: string;
 }
 
@@ -218,4 +232,19 @@ export interface NewResourceDetail {
   isNew: boolean;
   meta?: Record<string, any>;
   schema?: Record<string, any>;
+}
+
+export interface TypeItemPicInfo {
+  id: string;
+  name: string;
+  versionId: string;
+  version: string;
+  pictures: { url: string; type: string; sort?: number }[];
+}
+
+export interface ThirdPartyPicRes {
+  data: {
+    url: string;
+    name: string;
+  };
 }

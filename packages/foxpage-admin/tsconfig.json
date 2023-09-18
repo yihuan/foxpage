@@ -6,6 +6,7 @@
     // syntax
     "strict": true,
     "alwaysStrict": true,
+    "declaration": true,
     "noImplicitAny": false,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
@@ -13,74 +14,42 @@
     "noUnusedLocals": true,
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
-    "resolveJsonModule": false,
-    "lib": [
-      "dom",
-      "es7",
-      "esnext"
-    ],
+    "resolveJsonModule": true,
+    "lib": ["dom", "es7", "esnext"],
     "jsx": "react",
     // compile
-    "rootDirs": [
-      "."
-    ],
+    "rootDirs": ["."],
     "skipLibCheck": true,
     "target": "es6",
     "module": "commonjs",
     "moduleResolution": "node",
-    // "declaration": true,
     "removeComments": false,
-    "sourceMap": true,
+    "sourceMap": false,
     "allowJs": true,
     "locale": "zh-cn",
     "outDir": "./lib",
     "baseUrl": ".",
     "paths": {
-      "@/pages/*": [
-        "src/pages/*"
-      ],
-      "@/configs/*": [
-        "src/configs/*"
-      ],
-      "@/apis/*": [
-        "src/apis/*"
-      ],
-      "@/components/*": [
-        "src/pages/components/*"
-      ],
-      "@/utils/*": [
-        "src/utils/*"
-      ],
-      "@/store/*": [
-        "src/store/*"
-      ],
-      "@/actions/*": [
-        "src/store/actions/*"
-      ],
-      "@/reducers/*": [
-        "src/store/reducers/*"
-      ],
-      "@/sagas/*": [
-        "src/store/sagas/*"
-      ],
-      "@/types/*": [
-        "typings/*"
-      ],
-      "@/services/*": [
-        "src/services/*"
-      ],
-      "@/constants/*": [
-        "src/constants/*"
-      ],
+      "@/pages/*": ["src/pages/*"],
+      "@/apis/*": ["src/apis/*"],
+      "@/designer/*": ["src/pages/designer/*"],
+      "@/components/*": ["src/pages/components/*"],
+      "@/utils/*": ["src/utils/*"],
+      "@/store/*": ["src/store/*"],
+      "@/actions/*": ["src/store/actions/*"],
+      "@/reducers/*": ["src/store/reducers/*"],
+      "@/sagas/*": ["src/store/sagas/*"],
+      "@/constants/*": ["src/constants/*"],
+      "@/foxI18n/*": ["src/locales/*"],
+      "@/types/*": ["typings/*"]
     }
   },
   "include": [
+    "typings/*",
+    "typings/**/*",
     "src/*",
     "src/**/*",
-    "typings/*",
-    "typings/**/*"
+    "../foxpage-client-types/common/localeTimeZone.d.ts"
   ],
-  "exclude": [
-    "node_modules"
-  ]
+  "exclude": ["node_modules"]
 }

@@ -1,13 +1,15 @@
+import dayjs from 'dayjs';
 import _ from 'lodash';
 
 import { Application, AppResource, Folder, Organization } from '@foxpage/foxpage-server-types';
 
 import { LOG, PRE, TYPE } from '../../config/constant';
 import * as Model from '../models';
-import { AppInfo, AppOrgInfo, AppSearch, AppWithFolder } from '../types/app-types';
+import { AddAppSetting, AppOrgInfo, AppSearch, AppWithFolder, UpdateAppSetting } from '../types/app-types';
 import { FolderFileContent } from '../types/content-types';
 import { FoxCtx, PageList } from '../types/index-types';
-import { generationId } from '../utils/tools';
+import { AppHostInfo } from '../types/validates/app-validate-types';
+import { generationId, mergeUrl } from '../utils/tools';
 
 import { BaseService } from './base-service';
 import * as Service from './index';
@@ -44,14 +46,18 @@ export class ApplicationService extends BaseService<Application> {
       name: _.trim(params.name) || '',
       creator: params.creator || options.ctx.userInfo.id,
       resources: params.resources || [],
+      setting: {},
     };
 
     options.ctx.transactions.push(Model.application.addDetailQuery(appDetail));
-    options.ctx.operations.push({
-      action: LOG.CREATE,
-      category: { type: LOG.CATEGORY_ORGANIZATION, id: params.organizationId },
-      content: { id: appDetail.id, dataType: TYPE.APPLICATION, after: appDetail },
-    });
+    Service.userLog.addLogItem(
+      { id: appDetail.id },
+      {
+        ctx: options.ctx,
+        actions: [LOG.CREATE, '', TYPE.APPLICATION],
+        category: { applicationId: appDetail.id },
+      },
+    );
 
     return appDetail;
   }
@@ -107,35 +113,15 @@ export class ApplicationService extends BaseService<Application> {
   /**
    * Get a list of apps containing paging information
    * @param  {AppSearch} params
-   * @returns {AppInfo} Promise
+   * @returns {Application} Promise
    */
-  async getPageList(params: AppSearch): Promise<PageList<AppInfo>> {
+  async getPageList(params: AppSearch): Promise<{ total: number; appList: Application[] }> {
     const [appList, total] = await Promise.all([
       Model.application.getAppList(params),
       Model.application.getTotal(params),
     ]);
 
-    // Obtain user name data based on app lists data
-    let appUserList: AppInfo[] = [];
-    if (appList.length > 0) {
-      const userBase = await Service.user.getDetailByIds(_.map(appList, 'creator'));
-      const userBaseObject = _.keyBy(
-        _.map(userBase, (user) => _.pick(user, ['id', 'account'])),
-        'id',
-      );
-
-      appList.map((app) => {
-        const appBase = Object.assign(_.omit(app, 'creator'), {
-          creator: userBaseObject[app.creator],
-        }) as AppInfo;
-        appUserList.push(appBase);
-      });
-    }
-
-    return {
-      pageInfo: { page: <number>params.page, size: <number>params.size, total: total },
-      data: appUserList,
-    };
+    return { total, appList };
   }
 
   /**
@@ -224,5 +210,102 @@ export class ApplicationService extends BaseService<Application> {
 
     const appList = await this.getDetailByIds(_.uniq(contentAppIds));
     return _.flatten(_.map(appList, 'resources')) || [];
+  }
+
+  /**
+   * concat app page preview locales url
+   * if the host is not {url:'', locales: []} format
+   * default to host fields is url
+   * @param hostList
+   * @param pathnames
+   * @param slug
+   */
+  getAppHostLocaleUrl(hostList: AppHostInfo[], pathNames: string[], slug?: string): Record<string, string[]> {
+    let hostUrls: Record<string, string[]> = {};
+    hostList.forEach((host) => {
+      if (_.isString(host) && !hostUrls['base']) {
+        hostUrls['base'] = pathNames.map((pathname) => mergeUrl(host, pathname, slug || ''));
+      } else {
+        if (host.locales.length > 0) {
+          host.locales.forEach((locale) => {
+            if (!hostUrls[locale]) {
+              hostUrls[locale] = pathNames.map((pathname) => mergeUrl(host.url, pathname, slug || ''));
+            }
+          });
+        } else if (!hostUrls['base']) {
+          hostUrls['base'] = pathNames.map((pathname) => mergeUrl(host.url, pathname, slug || ''));
+        }
+      }
+    });
+
+    return hostUrls;
+  }
+
+  /**
+   * filter the special item in app settings
+   * @param setting
+   * @param type
+   * @param typeId
+   * @returns
+   */
+  getAppSettingItem(setting: Record<string, any[]>, type: string, typeIds: string[]): Record<string, any> {
+    let typeInfo: Record<string, any> = {};
+    if (setting[type] && setting[type].length > 0) {
+      typeInfo = _.keyBy(
+        _.filter(setting[type], (item) => typeIds.indexOf(item.id) !== -1),
+        'id',
+      );
+    }
+    return typeInfo || {};
+  }
+
+  /**
+   * Add app setting item values
+   * @param params
+   * @returns
+   */
+  addAppSetting(params: AddAppSetting, options: { ctx: FoxCtx }): void {
+    // Add copy file to app setting
+    const currentTime = dayjs().format('YYYY-MM-DD HH:mm:ss');
+    const pushData = {
+      ['setting.' + params.type]: {
+        idx: params.idx || 0,
+        id: params.typeId || '',
+        name: params.typeName || '',
+        status: params.typeStatus || false,
+        category: params.category || {},
+        createTime: currentTime,
+        updateTime: currentTime,
+      },
+    };
+    options.ctx.transactions.push(
+      Model.application.updateDetailQuery(params.applicationId, { $push: pushData } as any),
+    );
+  }
+
+  /**
+   * Update app setting item values
+   * @param params
+   * @param options
+   */
+  updateAppSetting(params: UpdateAppSetting, options: { ctx: FoxCtx }): void {
+    options.ctx.transactions.push(
+      Model.application.batchUpdateDetailQuery(
+        {
+          id: params.applicationId,
+          ['setting.' + params.type + '.idx']: params.setting.idx,
+          ['setting.' + params.type + '.id']: params.typeId,
+        } as any,
+        {
+          $set: {
+            ['setting.' + params.type + '.$.name']: params.setting.name,
+            ['setting.' + params.type + '.$.status']: params.setting.status || false,
+            ['setting.' + params.type + '.$.category']: params.setting.category || {},
+            ['setting.' + params.type + '.$.defaultValue']: params.setting.defaultValue || {},
+            ['setting.' + params.type + '.$.updateTime']: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+          },
+        } as any,
+      ),
+    );
   }
 }

@@ -12,7 +12,19 @@ import {
 } from 'class-validator';
 import { JSONSchema } from 'class-validator-jsonschema';
 
-import { ResponseBase } from './index-validate-types';
+import { ContentIdVersion, PagingReq, ResponseBase, ResponsePageBase } from './index-validate-types';
+
+export class AppComponentId {
+  @JSONSchema({ description: 'Application ID' })
+  @IsString()
+  @Length(20, 20)
+  applicationId: string;
+
+  @JSONSchema({ description: 'Component File ID' })
+  @IsString()
+  @Length(20, 20)
+  id: string;
+}
 
 export class AppComponentsReq {
   @JSONSchema({ description: 'Application ID' })
@@ -29,6 +41,16 @@ export class AppComponentsReq {
   @IsArray()
   @IsOptional()
   componentIds: Array<string>;
+
+  @JSONSchema({ description: 'Component search' })
+  @IsString()
+  @IsOptional()
+  search: string;
+
+  @JSONSchema({ description: 'Component load On ignite, only effect in component ids is empty' })
+  @IsBoolean()
+  @IsOptional()
+  loadOnIgnite: boolean;
 }
 
 export class ResourceEntry {
@@ -133,12 +155,10 @@ export class AppComponentListReq {
 export class AppComponentVersionListReq {
   @JSONSchema({ description: 'Application ID' })
   @IsString()
-  @Length(20, 20)
   applicationId: string;
 
   @JSONSchema({ description: 'Component file ID' })
   @IsString()
-  @Length(20, 20)
   id: string;
 
   @JSONSchema({ description: 'Search characters, component name and ID' })
@@ -172,6 +192,11 @@ export class AddComponentReq {
   @JSONSchema({ description: 'Component type, component|editor|library' })
   @IsString()
   type: string;
+
+  @JSONSchema({ description: 'Component type, react.component|dsl.template|...' })
+  @IsString()
+  @IsOptional()
+  componentType: string;
 }
 
 export class ComponentFileContentReq {
@@ -180,10 +205,28 @@ export class ComponentFileContentReq {
   @Length(20, 20)
   applicationId: string;
 
-  @JSONSchema({ description: 'Component file ID' })
+  @JSONSchema({ description: 'Component file ID or content ID' })
   @IsString()
   @Length(20, 20)
   id: string;
+}
+
+export class ComponentContentVersionReq {
+  @JSONSchema({ description: 'Application' })
+  @IsString()
+  @Length(20, 20)
+  applicationId: string;
+
+  @JSONSchema({ description: 'Component file ID or content ID' })
+  @IsString()
+  @IsOptional()
+  @Length(20, 20)
+  id: string;
+
+  @JSONSchema({ description: 'Component name' })
+  @IsString()
+  @IsOptional()
+  name: string;
 }
 
 export class ComponentFileVersionReq {
@@ -248,6 +291,16 @@ export class UpdateComponentReq {
   @JSONSchema({ description: 'Component Introduction' })
   @IsString()
   intro: string;
+
+  @JSONSchema({ description: 'Component delivery on sdk ignite' })
+  @IsBoolean()
+  @IsOptional()
+  loadOnIgnite: boolean;
+
+  @JSONSchema({ description: 'Component type' })
+  @IsString()
+  @IsOptional()
+  componentType: string;
 }
 
 export class UpdateComponentContentReq {
@@ -290,6 +343,11 @@ export class AppNameVersionPackagesReq {
   @IsArray()
   @IsOptional()
   type: Array<string>;
+
+  @JSONSchema({ description: 'return canary component' })
+  @IsBoolean()
+  @IsOptional()
+  isCanary: boolean;
 }
 
 export class RemotePackageReq {
@@ -397,6 +455,10 @@ export class RemoteComponentContent {
   @JSONSchema({ description: 'Component content resource' })
   @IsObject()
   resource: any;
+
+  @JSONSchema({ description: 'Component content schema' })
+  @IsObject()
+  schema: any;
 }
 
 export class RemoteComponent {
@@ -424,6 +486,11 @@ export class BatchComponentResource {
   @ValidateNested()
   @Type(() => RemoteComponent)
   component: RemoteComponent;
+
+  @JSONSchema({ description: 'Component type, react.component|dsl.template|...' })
+  @IsString()
+  @IsOptional()
+  componentType: string;
 }
 
 export class SaveRemotePackageReq {
@@ -437,7 +504,180 @@ export class SaveRemotePackageReq {
   components: Array<BatchComponentResource>;
 }
 
+export class BatchEditorResource {
+  @JSONSchema({ description: 'Editor name' })
+  @IsString()
+  name: string;
+
+  @JSONSchema({ description: 'Editor resource group id' })
+  @IsString()
+  groupId: string;
+
+  @JSONSchema({ description: 'Remote component detail' })
+  @ValidateNested()
+  @Type(() => RemoteComponent)
+  component: RemoteComponent;
+
+  @JSONSchema({ description: 'Component type, react.component|dsl.template|...' })
+  @IsString()
+  @IsOptional()
+  componentType: string;
+}
+
+export class SaveEditorPackageReq {
+  @JSONSchema({ description: 'Application ID' })
+  @IsString()
+  @Length(20, 20)
+  applicationId: string;
+
+  @JSONSchema({ description: 'package editor list' })
+  @ValidateNested({ each: true })
+  components: Array<BatchEditorResource>;
+}
+
 export class RemotePackageRes extends ResponseBase {
   @ValidateNested({ each: true })
   data: BatchComponentResource;
+}
+
+export class RemotePagePackageReq extends PagingReq {
+  @JSONSchema({ description: 'Application ID' })
+  @IsString()
+  @Length(20, 20)
+  applicationId: string;
+
+  @JSONSchema({ description: 'Resource group ID' })
+  @IsString()
+  @Length(20, 20)
+  groupId: string;
+
+  @JSONSchema({ description: 'Resource group name' })
+  @IsString()
+  @IsOptional()
+  groupName: string;
+
+  @JSONSchema({ description: 'component name' })
+  @IsString()
+  @IsOptional()
+  name: string;
+}
+
+export class ComponentCategory {
+  @JSONSchema({ description: 'Component nick name' })
+  @IsString()
+  name: string;
+
+  @JSONSchema({ description: 'Component category name' })
+  @IsString()
+  categoryName: string;
+
+  @JSONSchema({ description: 'Component group name' })
+  @IsString()
+  groupName: string;
+
+  @JSONSchema({ description: 'Component Sort' })
+  @IsNumber()
+  @IsOptional()
+  sort?: number;
+
+  @JSONSchema({ description: 'Component Rank' })
+  @IsNumber()
+  @IsOptional()
+  rank?: number;
+
+  @JSONSchema({ description: 'Component Props' })
+  @IsObject()
+  @IsOptional()
+  props?: Record<string, any>;
+
+  @JSONSchema({ description: 'Component category description' })
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @JSONSchema({ description: 'Component category screenshot image url' })
+  @IsString()
+  @IsOptional()
+  screenshot?: string;
+}
+
+export class DeleteComponentCategoryReq extends AppComponentId {}
+
+export class SetComponentCategoryReq extends AppComponentId {
+  @JSONSchema({ description: 'Resource category detail' })
+  @ValidateNested()
+  @Type(() => ComponentCategory)
+  category: ComponentCategory;
+}
+
+export class RemotePagePackageRes extends ResponsePageBase {
+  @ValidateNested({ each: true })
+  data: Array<BatchComponentResource>;
+}
+
+export class BatchLiveReq {
+  @JSONSchema({ description: 'Application ID' })
+  @IsString()
+  @Length(20, 20)
+  applicationId: string;
+
+  @ValidateNested({ each: true })
+  @IsArray()
+  idVersions: ContentIdVersion[];
+}
+
+export class GetCategoryComponentReq extends PagingReq {
+  @JSONSchema({ description: 'Application ID' })
+  @IsString()
+  @Length(20, 20)
+  applicationId: string;
+
+  @JSONSchema({ description: 'Component name or id' })
+  @IsString()
+  @IsOptional()
+  search: string;
+}
+
+export class ComponentCategoryTypes {
+  @JSONSchema({ description: 'Component category name' })
+  @IsString()
+  categoryName: string;
+
+  @JSONSchema({ description: 'Component category group names' })
+  @IsArray()
+  groupNames: Array<string>;
+}
+
+export class ComponentCategoryTypesRes extends ResponseBase {
+  @ValidateNested({ each: true })
+  @Type(() => ComponentCategoryTypes)
+  data: Array<ComponentCategoryTypes>;
+}
+
+export class GetComponentUsedReq extends PagingReq {
+  @JSONSchema({ description: 'Application ID' })
+  @IsString()
+  @Length(20, 20)
+  applicationId: string;
+
+  @JSONSchema({ description: 'Component name' })
+  @IsString()
+  name: string;
+
+  @JSONSchema({ description: 'Only response live version, default is true' })
+  @IsBoolean()
+  @IsOptional()
+  live: boolean;
+}
+
+export class SetComponentDeprecatedReq extends AppComponentId {
+  @JSONSchema({ description: 'Deprecated status, true|false' })
+  @IsBoolean()
+  status: boolean;
+}
+
+export class SetReferenceComponentLiveReq extends AppComponentId {
+  @JSONSchema({ description: 'Version id, if version id is empty, then clear it' })
+  @IsString()
+  versionId: string;
 }

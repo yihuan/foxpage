@@ -45,14 +45,17 @@ export class AddAppsPageDetail extends BaseController {
   @ResponseSchema(ProjectListRes)
   async index(@Ctx() ctx: FoxCtx, @Body() params: AddProjectPagesReq): Promise<ResData<File>> {
     try {
-      const hasAuth = await this.service.auth.folder(params.projectId, { ctx });
+      const [hasAuth, folderDetail] = await Promise.all([
+        this.service.auth.folder(params.projectId, { ctx }),
+        this.service.folder.info.getDetailById(params.projectId),
+      ]);
+
       if (!hasAuth) {
         return Response.accessDeny(i18n.system.accessDeny, 4040101);
       }
 
       // Check the validity of applications and documents
-      const folderDetail = await this.service.folder.info.getDetailById(params.projectId);
-      if (!folderDetail || folderDetail.deleted) {
+      if (this.notValid(folderDetail)) {
         return Response.warning(i18n.project.invalidProjectId, 2040101);
       }
 
@@ -77,7 +80,7 @@ export class AddAppsPageDetail extends BaseController {
           fileId: fileDetail?.id || '',
           deleted: false,
         });
-        if (!contentDetail) {
+        if (this.notValid(contentDetail)) {
           contentDetail = this.service.content.info.create(
             {
               title: file.name,

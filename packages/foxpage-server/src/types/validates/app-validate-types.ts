@@ -9,13 +9,19 @@ import {
   IsOptional,
   IsString,
   Length,
-  Min,
   ValidateNested,
 } from 'class-validator';
 import { JSONSchema } from 'class-validator-jsonschema';
 
 import { FolderDetail } from './file-validate-types';
-import { ResponseBase, ResponsePageBase } from './index-validate-types';
+import { PagingReq, ResponseBase, ResponsePageBase } from './index-validate-types';
+import { UserBase } from './user-validate-types';
+
+export class AppIDReq {
+  @JSONSchema({ description: 'Application ID' })
+  @IsString()
+  applicationId: string;
+}
 
 export class AppDetail {
   @JSONSchema({ description: 'Application ID' })
@@ -25,7 +31,7 @@ export class AppDetail {
 
   @JSONSchema({ description: 'Application name' })
   @IsString()
-  @Length(5, 50)
+  @Length(1, 50)
   name: string;
 
   @JSONSchema({ description: 'Application introduction' })
@@ -84,6 +90,16 @@ export class AppResource {
   id: string;
 }
 
+export class AppHostInfo {
+  @JSONSchema({ description: 'Host url' })
+  @IsString()
+  url: string;
+
+  @JSONSchema({ description: 'Host locales' })
+  @IsArray()
+  locales: Array<string>;
+}
+
 export class AppBaseDetail {
   @JSONSchema({ description: 'Application Name' })
   @IsString()
@@ -99,7 +115,7 @@ export class AppBaseDetail {
   @JSONSchema({ description: 'Application Host' })
   @IsArray()
   @IsOptional()
-  host: Array<string>;
+  host: AppHostInfo[];
 
   @JSONSchema({ description: 'App Slug' })
   @IsString()
@@ -118,47 +134,30 @@ export class AppBaseDetail {
   resources: Array<AppResource>;
 }
 
-export class AppListReq {
+export class AppListReq extends PagingReq {
   @JSONSchema({ description: 'Organization ID' })
   @IsString()
   @Length(20, 20)
   organizationId: string;
 
+  @JSONSchema({
+    description: 'App type, user|organization|project|user_project|involve_project, default is organization',
+  })
+  @IsString()
+  @IsOptional()
+  type: string;
+
   @JSONSchema({ description: 'Filter fields, currently only filtered by application name' })
   @IsString()
   @IsOptional()
   search?: string;
-
-  @JSONSchema({ description: 'Filter field, current page number' })
-  @IsNumber()
-  @Min(1)
-  @IsOptional()
-  page?: number;
-
-  @JSONSchema({ description: 'Filter fields, current data volume per page' })
-  @IsNumber()
-  @Min(1)
-  @IsOptional()
-  size?: number;
 }
 
-export class AllAppListReq {
+export class AllAppListReq extends PagingReq {
   @JSONSchema({ description: 'Filter fields, currently only filtered by application name' })
   @IsString()
   @IsOptional()
   search?: string;
-
-  @JSONSchema({ description: 'Filter field, current page number' })
-  @IsNumber()
-  @Min(1)
-  @IsOptional()
-  page?: number;
-
-  @JSONSchema({ description: 'Filter fields, current data volume per page' })
-  @IsNumber()
-  @Min(1)
-  @IsOptional()
-  size?: number;
 }
 
 export class AppListByIdsReq {
@@ -214,7 +213,7 @@ export class AppInfo {
   @JSONSchema({ description: 'Application Name' })
   @IsString()
   @IsNotEmpty()
-  @Length(5, 50)
+  @Length(1, 50)
   name: string;
 }
 
@@ -241,11 +240,7 @@ export class AppDetailWithFolderRes extends ResponseBase {
   data: AppDetailWithFolder;
 }
 
-export class AppPackageListReq {
-  @JSONSchema({ description: 'Application ID' })
-  @IsString()
-  applicationId: string;
-}
+export class AppPackageListReq extends AppIDReq {}
 
 export class AppPackageListDetail {
   @JSONSchema({ description: 'Content ID' })
@@ -287,7 +282,7 @@ export class AppLocalesRes extends ResponseBase {
   data: Array<string>;
 }
 
-export class AppProjectGoodsListReq {
+export class AppProjectGoodsListReq extends PagingReq {
   @JSONSchema({ description: 'Application ID' })
   @IsString()
   applicationId: string;
@@ -300,21 +295,9 @@ export class AppProjectGoodsListReq {
   @IsString()
   @IsOptional()
   search: string;
-
-  @JSONSchema({ description: 'Filter field, current page number' })
-  @IsNumber()
-  @Min(1)
-  @IsOptional()
-  page?: number;
-
-  @JSONSchema({ description: 'Filter fields, current data volume per page' })
-  @IsNumber()
-  @Min(1)
-  @IsOptional()
-  size?: number;
 }
 
-export class AppPackageGoodsListReq {
+export class AppPackageGoodsListReq extends PagingReq {
   @JSONSchema({ description: 'Application ID' })
   @IsString()
   applicationId: string;
@@ -323,16 +306,102 @@ export class AppPackageGoodsListReq {
   @IsString()
   @IsOptional()
   search: string;
+}
 
-  @JSONSchema({ description: 'Filter field, current page number' })
-  @IsNumber()
-  @Min(1)
-  @IsOptional()
-  page?: number;
+export class AppSettingListReq extends PagingReq {
+  @JSONSchema({ description: 'Application ID' })
+  @IsString()
+  @Length(20, 20)
+  applicationId: string;
 
-  @JSONSchema({ description: 'Filter fields, current data volume per page' })
-  @IsNumber()
-  @Min(1)
+  @JSONSchema({ description: 'App type, user, organization, default is organization' })
+  @IsString()
+  type: string;
+
+  @JSONSchema({ description: 'Filter fields, currently only filtered by application name' })
+  @IsString()
   @IsOptional()
-  size?: number;
+  search?: string;
+}
+
+export class AppSettingInfo {
+  @JSONSchema({ description: 'App setting item idx' })
+  @IsNumber()
+  @IsOptional()
+  idx: number;
+
+  @JSONSchema({ description: 'App setting item id, file Id' })
+  @IsString()
+  id: string;
+
+  @JSONSchema({ description: 'App setting item name' })
+  @IsString()
+  name: string;
+
+  @JSONSchema({ description: 'Item type status, true|false' })
+  @IsBoolean()
+  status: boolean;
+
+  @JSONSchema({ description: 'Item type category' })
+  @ValidateNested({ each: true })
+  @IsObject()
+  @IsOptional()
+  category: Record<string, any>;
+
+  @JSONSchema({ description: 'Item type default value' })
+  @ValidateNested({ each: true })
+  @IsObject()
+  @IsOptional()
+  defaultValue: Record<string, any>;
+}
+
+export class AppSettingDetailReq {
+  @JSONSchema({ description: 'Application ID' })
+  @IsString()
+  applicationId: string;
+
+  @JSONSchema({ description: 'Application setting item type, page|template|block|component' })
+  @IsString()
+  type: string;
+
+  @JSONSchema({ description: 'Application setting item detail' })
+  @ValidateNested({ each: true })
+  @IsArray()
+  @Type(() => AppSettingInfo)
+  setting: AppSettingInfo[];
+}
+
+export class AppSettingItemDetail extends AppSettingInfo {
+  @JSONSchema({ description: 'Application Owner' })
+  @IsObject()
+  creator: UserBase;
+
+  @JSONSchema({ description: 'Application create time' })
+  @IsDate()
+  createTime: Date;
+
+  @JSONSchema({ description: 'Application update time' })
+  @IsDate()
+  updateTime: Date;
+}
+
+export class AppSettingItemRes extends ResponsePageBase {
+  @ValidateNested({ each: true })
+  @IsArray()
+  @Type(() => AppSettingItemDetail)
+  data: Array<AppSettingItemDetail>;
+}
+
+export class RemoveAppSettingDetailReq {
+  @JSONSchema({ description: 'Application ID' })
+  @IsString()
+  applicationId: string;
+
+  @JSONSchema({ description: 'Application setting item type, page|template|component' })
+  @IsString()
+  type: string;
+
+  @JSONSchema({ description: 'Application setting item type idx list, split by ","' })
+  @IsString()
+  ids: string;
 }

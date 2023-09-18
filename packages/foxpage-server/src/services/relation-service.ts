@@ -1,11 +1,11 @@
 import _ from 'lodash';
-import { FoxCtx } from 'src/types/index-types';
+import { DBQuery, FoxCtx } from 'src/types/index-types';
 
 import { ContentRelation, ContentVersion, File } from '@foxpage/foxpage-server-types';
 
-import { PRE } from '../../config/constant';
+import { PRE, TYPE } from '../../config/constant';
 import * as Model from '../models';
-import { ContentVersionString } from '../types/content-types';
+import { ContentVersionString, RelationContentVersion } from '../types/content-types';
 import { generationId } from '../utils/tools';
 
 import { BaseService } from './base-service';
@@ -29,8 +29,7 @@ export class RelationService extends BaseService<ContentRelation> {
 
   /**
    * Check the validity of the data in the relation, that is, it does not exist or is deleted
-   * @param  {Record<string} relations
-   * @param  {string}>} {id
+   * @param  {Record<string, { id: string }>} relations
    * @returns Promise
    */
   async checkRelationStatus(relations: Record<string, { id: string }>): Promise<Record<string, string>> {
@@ -42,18 +41,15 @@ export class RelationService extends BaseService<ContentRelation> {
       const contentObject = _.keyBy(contentList, 'id');
 
       for (const contentId of contentIds) {
-        if (
-          !contentObject[contentId] ||
-          // contentObject[contentId].liveVersionNumber === 0 ||
-          contentObject[contentId].deleted
-        ) {
+        if (!contentObject[contentId] || contentObject[contentId].deleted) {
           invalidContentIds.push(contentId);
         }
       }
 
       if (invalidContentIds.length > 0) {
         Object.keys(relations).forEach((relation) => {
-          if (invalidContentIds.indexOf(relations[relation].id) !== -1) {
+          let ignoreCheck = this.ignoreCheckRelation(relation, relations[relation]);
+          if (!ignoreCheck && invalidContentIds.indexOf(relations[relation].id) !== -1) {
             invalidRelations[relation] = relations[relation].id;
           }
         });
@@ -136,9 +132,13 @@ export class RelationService extends BaseService<ContentRelation> {
     Object.keys(contentFileObject).forEach((contentId) => {
       const type = contentFileObject[contentId].type + 's';
       const relationDetail = relationObject[contentId] || {};
+      console.log(relationDetail);
       !relations[type] && (relations[type] = []);
       relations[type].push(
-        Object.assign({ version: relationDetail?.version || '' }, relationDetail?.content || {}),
+        Object.assign({}, relationDetail?.content || {}, {
+          id: relationDetail.contentId || '',
+          version: relationDetail?.version || '',
+        }),
       );
     });
 
@@ -205,6 +205,40 @@ export class RelationService extends BaseService<ContentRelation> {
   }
 
   /**
+   * get relations and dependent live version detail
+   * @param contentIds
+   * @returns
+   */
+  async getRelationsAndDeps(contentIds: string[]): Promise<RelationContentVersion[]> {
+    let relationInfoList: RelationContentVersion[] = [];
+    if (contentIds.length === 0) {
+      return relationInfoList;
+    }
+
+    const relationList = await Service.content.list.getDetailByIds(contentIds);
+    const relationVersionList = await Service.version.list.getDetailByIds(
+      _.map(relationList, 'liveVersionId') as string[],
+    );
+    const relationVersionObject = _.keyBy(relationVersionList, 'contentId');
+    relationInfoList = relationList.map((item) => {
+      return {
+        id: item.id,
+        fileId: item.fileId,
+        content: item,
+        version: relationVersionObject[item.id],
+      };
+    });
+
+    const depsRelations = this.getRelationIdsFromVersion(relationVersionList);
+    if (depsRelations.ids && depsRelations.ids.length > 0) {
+      const depsRelationList = await this.getRelationsAndDeps(depsRelations.ids);
+      relationInfoList = relationInfoList.concat(depsRelationList);
+    }
+
+    return relationInfoList;
+  }
+
+  /**
    * Get the id and version information of the relation from the version details
    * @param  {ContentVersion[]} versionList
    * @param  {string[]=[]} ignoreType
@@ -252,5 +286,153 @@ export class RelationService extends BaseService<ContentRelation> {
       }
     });
     return invalidRelations;
+  }
+
+  /**
+   * filter ignore relation check items
+   * @param relationKey
+   * @param relationValue
+   * @returns
+   */
+  ignoreCheckRelation(relationKey: string, relationValue: Record<string, any>): boolean {
+    const ignoreNamePrefixs = ['$this:', '__context:'];
+    const ignoreTypePrefixs = ['sys_'];
+
+    let ignoreCheck = false;
+    for (const namePrefix of ignoreNamePrefixs) {
+      if (_.startsWith(relationKey, namePrefix)) {
+        ignoreCheck = true;
+        break;
+      }
+    }
+
+    if (!ignoreCheck) {
+      for (const typePrefix of ignoreTypePrefixs) {
+        if (_.startsWith(relationValue.type, typePrefix)) {
+          ignoreCheck = true;
+          break;
+        }
+      }
+    }
+
+    return ignoreCheck;
+  }
+
+  /**
+   * save version relation tags data
+   * @param versionId
+   * @returns
+   */
+  async saveVersionRelations(versionId: string): Promise<DBQuery> {
+    const relations = await this.getVersionRelations(versionId);
+    const versionRelationDetail = await this.getDetail({
+      applicationId: relations.applicationId,
+      type: relations.type,
+      level: TYPE.VERSION,
+      parentItems: { $elemMatch: { type: TYPE.VERSION, id: versionId } },
+    });
+
+    if (versionRelationDetail?.id) {
+      // update
+      return this.updateDetailQuery(
+        versionRelationDetail.id,
+        Object.assign({}, relations, { deleted: false }),
+      );
+    } else {
+      // create
+      return this.addDetailQuery(
+        Object.assign({ id: generationId(PRE.RELATION), level: TYPE.VERSION }, relations) as any,
+      );
+    }
+  }
+
+  /**
+   * delete the filter condition's version relations
+   * @param params
+   */
+  async removeVersionRelations(params: {
+    folderIds?: string[];
+    fileIds?: string[];
+    contentIds?: string[];
+    versionIds?: string[];
+  }): Promise<void> {
+    const { folderIds = [], fileIds = [], contentIds = [], versionIds = [] } = params;
+    let filters: Record<string, any>[] = [];
+    if (folderIds.length > 0) {
+      filters.push({
+        parentItems: { $elemMatch: { type: TYPE.FOLDER, id: { $in: folderIds } } },
+      });
+    }
+
+    if (fileIds.length > 0) {
+      filters.push({
+        parentItems: { $elemMatch: { type: TYPE.FILE, id: { $in: fileIds } } },
+      });
+    }
+
+    if (contentIds.length > 0) {
+      filters.push({
+        parentItems: { $elemMatch: { type: TYPE.CONTENT, id: { $in: contentIds } } },
+      });
+    }
+
+    if (versionIds.length > 0) {
+      filters.push({
+        parentItems: { $elemMatch: { type: TYPE.VERSION, id: { $in: versionIds } } },
+      });
+    }
+
+    if (filters.length > 0) {
+      const relationList = await Service.relation.find({ $or: filters, deleted: false });
+      const relationIds = _.map(relationList, 'id');
+      if (relationIds.length > 0) {
+        await Service.relation.batchUpdateDetail(relationIds, { deleted: true });
+      }
+    }
+  }
+
+  /**
+   * get the version's relation and component
+   * format to { tags: [{type:'', key: '', value:''}],parentTags: [{type:'', id:''}] }
+   * @param versionId
+   * @returns
+   */
+  async getVersionRelations(versionId: string): Promise<Record<string, any>> {
+    let applicationId = '';
+    let type = '';
+    const versionDetail = await Service.version.info.getDetailById(versionId);
+
+    if (this.notValid(versionDetail)) {
+      return { applicationId, type, tags: [], parentItems: [] };
+    }
+
+    const parentObject = await Service.content.list.getContentAllParents([versionDetail.contentId]);
+    let parentItems: Record<string, string>[] = [];
+    for (const item of parentObject[versionDetail.contentId] as any[]) {
+      item.parentFolderId && parentItems.push({ type: TYPE.FOLDER, id: item.id });
+      item.folderId && parentItems.push({ type: TYPE.FILE, id: item.id });
+
+      if (item.fileId) {
+        parentItems.push({ type: TYPE.CONTENT, id: item.id });
+        applicationId = item.applicationId;
+        type = item.type;
+      }
+    }
+    parentItems.push({ type: TYPE.VERSION, id: versionId });
+
+    const flattenSchemas = Service.version.info.flattenSchemas(versionDetail.content.schemas);
+    const componentTags = _.map(
+      _.pullAll(_.map(flattenSchemas, 'name'), ['', 'page', 'null']),
+      (component) => {
+        return { type: TYPE.COMPONENT, key: 'name', value: component };
+      },
+    );
+    const relationTags = _.map(_.toArray(versionDetail.content.relation), (relation) => {
+      return { type: relation.type, key: 'id', value: relation.id };
+    });
+
+    const tags = _.uniqBy(_.concat(relationTags, componentTags), 'value');
+
+    return { applicationId, type, tags, parentItems };
   }
 }

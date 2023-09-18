@@ -1,12 +1,13 @@
+import dayjs from 'dayjs';
 import _ from 'lodash';
 
 import { Content, Log } from '@foxpage/foxpage-server-types';
 
-import { LOG, METHOD, PRE, RESPONSE_LEVEL, TYPE } from '../../config/constant';
+import { LOG, METHOD, PRE, TYPE } from '../../config/constant';
 import * as Model from '../models';
 import * as Service from '../services';
 import { FoxCtx, PageData } from '../types/index-types';
-import { ContentChange, DataLogPage, UserOperationParams } from '../types/log-types';
+import { ContentChange, DataLogPage } from '../types/log-types';
 import { generationId } from '../utils/tools';
 
 import { BaseService } from './base-service';
@@ -49,34 +50,44 @@ export class LogService extends BaseService<Log> {
         log.content.id && logDataIds.push(log.content.id);
       });
 
-      const [fileObject, ...logDataList] = await Promise.all([
-        Service.file.list.getDetailObjectByIds(fileIds),
-        ...logDataIds.map((id) => this.getDataDetail(id)),
-      ]);
-
+      const [...logDataList] = await Promise.all([...logDataIds.map((id) => this.getDataDetail(id))]);
       const logDataObject = _.keyBy(logDataList, 'id');
 
+      // Get type all level ids
+      const itemIdObject = await this.getCategoryIds(ctx.operations);
       for (const log of ctx.operations) {
         if (!log.content.after && logDataObject[log.content.id]) {
           log.content.after = logDataObject[log.content.id];
         }
 
-        if (!log.content.dataType && log.content.fileId && fileObject[log.content.fileId]) {
-          log.content.dataType = fileObject[log.content.fileId]?.type || '';
+        if (log.category.type && log.category.type === TYPE.APPLICATION) {
+          log.category.applicationId = log.category.id;
         }
+
+        log.category.versionId &&
+          (log.category.contentId = itemIdObject.version[log.category.versionId]?.contentId);
+        if (log.category.contentId && !log.category.fileId) {
+          log.category.fileId = itemIdObject.content[log.category.contentId]?.fileId;
+        }
+        if (log.category.fileId && !log.category.folderId) {
+          log.category.folderId = itemIdObject.file[log.category.fileId]?.folderId;
+        }
+        log.category.folderId &&
+          (log.category.applicationId = itemIdObject.folder[log.category.folderId]?.applicationId);
 
         allLogs.push(
           Object.assign({}, log, {
             transactionId: ctx.logAttr.transactionId,
             id: generationId(PRE.LOG),
-            category: _.isString(log.category) ? this.getLogCategory(log.category, ctx) : log.category,
-            operator: operator,
+            category: log.category,
+            operator: operator || 'anonymous',
             deleted: false,
           }),
         );
       }
 
-      await Model.log.addDetail(allLogs);
+      // save to log and user log collection
+      await Promise.all([Model.log.addDetail(allLogs), Model.userLog.addDetail(allLogs as any[])]);
     }
   }
 
@@ -85,55 +96,38 @@ export class LogService extends BaseService<Log> {
    * @param  {any} params
    * @returns Promise
    */
-  async saveRequest(params: any, options: { ctx: FoxCtx }): Promise<void> {
+  async saveRequest(options: { ctx: FoxCtx }): Promise<void> {
+    let content: Record<string, any> = options.ctx.log || {};
+
     // Set current real request method
-    params.content.realMethod = (
-      options.ctx.logAttr.method ||
-      params.content?.request?.method ||
-      METHOD.GET
-    ).toLowerCase();
-    // Do not save get query
-    if (params.content.realMethod !== METHOD.GET) {
+    content.realMethod = (options.ctx.logAttr.method || content?.request?.method || METHOD.GET).toLowerCase();
+
+    // Do not save query request
+    if (content.realMethod !== METHOD.GET) {
       // Set current operation id
-      params.content.id =
-        options.ctx.logAttr.id || params.content.request.body.id || params.content.request.query.id || '';
-      params.content.dataType = options.ctx.logAttr.type || undefined;
+      content.id = options.ctx.logAttr.id || content.request.body.id || content.request.query.id || '';
+      content.dataType = options.ctx.logAttr.type || undefined;
 
-      if (!_.isEmpty(params.content.request.query)) {
-        params.content.request.query = JSON.stringify(params.content.request.query);
+      if (!_.isEmpty(content.request.query)) {
+        content.request.query = JSON.stringify(content.request.query);
       }
 
-      if (!_.isEmpty(params.content.request.body)) {
-        params.content.request.body = JSON.stringify(params.content.request.body);
+      if (!_.isEmpty(content.request.body)) {
+        content.request.body = JSON.stringify(this.filterSensitiveData(content.request.body));
       }
 
-      const logDetail: Log = Object.assign({}, params, {
+      const logDetail: Log = Object.assign({
         id: generationId(PRE.LOG),
         action: 'request',
         transactionId: options.ctx.logAttr.transactionId,
-        category: _.isString(params.category)
-          ? this.getLogCategory(params.category, options.ctx)
-          : params.category,
-        operator: options.ctx.userInfo.id,
+        category: {},
+        operator: options.ctx.userInfo?.id || '',
         deleted: false,
+        content,
       });
 
       await Model.log.addDetail(logDetail);
     }
-  }
-
-  /**
-   * Obtain log classification data
-   * @param  {string} type
-   */
-  getLogCategory(type: string, ctx: FoxCtx): Record<string, string> {
-    if (type === LOG.CATEGORY_APPLICATION) {
-      return { type, id: ctx.logAttr.applicationId || '' };
-    } else if (type === LOG.CATEGORY_ORGANIZATION) {
-      return { type, id: ctx.logAttr.organizationId || '' };
-    }
-
-    return {};
   }
 
   /**
@@ -154,19 +148,20 @@ export class LogService extends BaseService<Log> {
   async getChangesContentList(params: ContentChange): Promise<Record<string, any>> {
     // Get the log data of the specified action
     const changeList: any[] = await Model.log.find({
-      createTime: { $gte: new Date(new Date(params.timestamp)) },
+      createTime: { $gt: new Date(new Date(params.timestamp)) },
       action: {
         $in: [
           LOG.LIVE,
           LOG.FILE_REMOVE,
           LOG.FILE_TAG,
+          LOG.FILE_EXTENSION,
           LOG.CONTENT_TAG,
           LOG.CONTENT_REMOVE,
+          LOG.CONTENT_OFFLINE,
           LOG.META_UPDATE,
         ] as any[],
       }, // Get the data set to live, tags updated data
-      'category.id': params.applicationId,
-      'category.type': LOG.CATEGORY_APPLICATION,
+      $or: [{ 'category.id': params.applicationId }, { 'category.applicationId': params.applicationId }],
       'content.id': { $exists: true },
     });
 
@@ -175,44 +170,52 @@ export class LogService extends BaseService<Log> {
     let contentIds: string[] = [];
     let contentIdTypes: Record<string, { id: string; type: string }> = {};
     let logContentId = '';
-    changeList.forEach((log) => {
+    let createTimestamps: number[] = [];
+    for (const log of changeList) {
       logContentId = log.content.id;
+      createTimestamps.push(dayjs(log.createTime).valueOf());
+      if (contentIds.indexOf(logContentId) !== -1 || fileIds.indexOf(logContentId) !== -1) {
+        continue;
+      }
+
       if (this.checkDataIdType(logContentId).type === TYPE.VERSION) {
         logContentId = log.content.contentId;
       }
 
       contentIdTypes[[log.action, log.content.id].join('_')] = { id: logContentId, type: log.action };
-      if ([LOG.LIVE, LOG.CONTENT_TAG, LOG.CONTENT_REMOVE, LOG.META_UPDATE].indexOf(log.action) !== -1) {
+      if (
+        [LOG.LIVE, LOG.CONTENT_TAG, LOG.CONTENT_REMOVE, LOG.META_UPDATE, LOG.CONTENT_OFFLINE].indexOf(
+          log.action,
+        ) !== -1
+      ) {
         contentIds.push(logContentId);
-      } else if ([LOG.FILE_TAG, LOG.FILE_REMOVE].indexOf(log.action) !== -1) {
+      } else if ([LOG.FILE_TAG, LOG.FILE_REMOVE, LOG.FILE_EXTENSION].indexOf(log.action) !== -1) {
         fileIds.push(logContentId);
       }
-    });
+    }
 
     // Get content containing fileId
     const contentList = await Service.content.info.getDetailByIds(contentIds);
     const contentObject = _.keyBy(contentList, 'id');
 
-    // Get file information
-    fileIds = fileIds.concat(_.map(contentList, 'fileId'));
-    const fileTypeInfo = await Service.file.info.getDetailByIds(fileIds);
-    const fileTypeObject = _.keyBy(fileTypeInfo, 'id');
-
     // Set the return structure
-    let [logFileId, logItemType, logTypeName] = ['', '', ''];
+    let [logItemType, logTypeName] = ['', ''];
     let logChangeObject: Record<string, any> = {};
     for (const logType in contentIdTypes) {
       const logItem = contentIdTypes[logType];
-      if ([LOG.FILE_TAG, LOG.FILE_REMOVE].indexOf(logItem.type) !== -1) {
-        logFileId = logItem.id;
-      } else {
-        logFileId = contentObject[logItem.id]?.fileId || '';
-      }
+      const contentType = contentObject[logItem.id]?.type || '';
 
-      [LOG.FILE_TAG, LOG.FILE_REMOVE].indexOf(logItem.type) !== -1 && (logTypeName = 'file');
-      logItem.type === LOG.CONTENT_TAG && (logTypeName = 'tag');
-      logItem.type === LOG.CONTENT_REMOVE && (logTypeName = fileTypeObject[logFileId]?.type);
-      logItem.type === LOG.LIVE && (logTypeName = fileTypeObject[logFileId]?.type);
+      if ([LOG.FILE_TAG, LOG.FILE_REMOVE, LOG.FILE_EXTENSION].indexOf(logItem.type) !== -1) {
+        logTypeName = TYPE.FILE;
+      } else if (logItem.type === LOG.CONTENT_TAG) {
+        logTypeName = TYPE.TAG;
+      } else if (
+        [LOG.CONTENT_REMOVE, LOG.CONTENT_OFFLINE, LOG.LIVE, LOG.FILE_REMOVE, TYPE.COMPONENT].indexOf(
+          logItem.type,
+        ) !== -1
+      ) {
+        logTypeName = contentType;
+      }
 
       // Does not return invalid file types or editor components
       if (!logTypeName || logTypeName === TYPE.EDITOR) {
@@ -220,13 +223,20 @@ export class LogService extends BaseService<Log> {
       }
 
       !logChangeObject[logTypeName] && (logChangeObject[logTypeName] = { updates: [], removes: [] });
-
       logItemType =
-        [LOG.FILE_REMOVE, LOG.CONTENT_REMOVE].indexOf(logItem.type) !== -1 ? 'removes' : 'updates';
+        [LOG.FILE_REMOVE, LOG.CONTENT_REMOVE, LOG.CONTENT_OFFLINE].indexOf(logItem.type) !== -1
+          ? 'removes'
+          : 'updates';
       logChangeObject[logTypeName][logItemType].push(logItem.id);
+
+      // add tag update when type is content remove
+      if ([LOG.CONTENT_OFFLINE, LOG.CONTENT_REMOVE].indexOf(logItem.type) !== -1) {
+        !logChangeObject[TYPE.TAG] && (logChangeObject[TYPE.TAG] = { updates: [], removes: [] });
+        logChangeObject[TYPE.TAG]['removes'].push(logItem.id);
+      }
     }
 
-    return logChangeObject;
+    return { logChangeObject, lastDataTime: _.max(createTimestamps) };
   }
 
   /**
@@ -269,7 +279,7 @@ export class LogService extends BaseService<Log> {
   addLogItem<T extends { id: string; contentId?: string }>(
     action: string,
     data: T | T[],
-    options?: { dataType?: string; fileId?: string },
+    options?: { dataType?: string; fileId?: string; actionType?: string; category?: Record<string, string> },
   ): any[] {
     !_.isArray(data) && (data = [data]);
 
@@ -278,55 +288,16 @@ export class LogService extends BaseService<Log> {
     data.forEach((cell) => {
       logData.push({
         action: action,
-        category: LOG.CATEGORY_APPLICATION,
+        actionType: options?.actionType || '',
+        category: options?.category || {},
         content: {
           id: cell?.id || '',
-          contentId: cell?.contentId || '',
-          fileId: options?.fileId || undefined,
-          dataType: options?.dataType || undefined,
-          before: cell,
+          before: action.split('_')[0] === LOG.CREATE ? {} : cell,
         },
       });
     });
 
     return logData;
-  }
-
-  /**
-   * Get the special user, special time, special action and special app's operation list and count
-   * @param  {UserOperationParams} params
-   * @returns {list:Log[], count:number}
-   */
-  async getUserOperationList(params: UserOperationParams): Promise<{ list: Log[]; count: number }> {
-    const skip = ((params.page || 1) - 1) * (params.size || 10);
-    const searchParams: any = {
-      operator: params.operator,
-      'content.realMethod': { $in: [METHOD.POST, METHOD.PUT, METHOD.DELETE] },
-      'content.response.code': RESPONSE_LEVEL.SUCCESS,
-      createTime: {
-        $gte: new Date(new Date(params.startTime)),
-        $lt: new Date(new Date(params.endTime)),
-      },
-    };
-
-    if (params.applicationId) {
-      searchParams['content.applicationId'] = params.applicationId;
-    }
-
-    if (params.action) {
-      searchParams.action = params.action;
-    }
-
-    const [operationList, operationCount] = await Promise.all([
-      this.find(searchParams, '-_id -category._id', {
-        sort: { createTime: -1 },
-        skip,
-        limit: params.size || 10,
-      }),
-      this.getCount(searchParams),
-    ]);
-
-    return { list: operationList, count: operationCount };
   }
 
   /**
@@ -406,5 +377,66 @@ export class LogService extends BaseService<Log> {
     };
 
     return { id, type: typeValue[id.slice(0, 4)] };
+  }
+
+  /**
+   * filter request sensitive data, pwd...
+   * @param data
+   */
+  filterSensitiveData(data: any): any {
+    if (data.password) {
+      data.password = '********';
+    }
+
+    return data;
+  }
+
+  /**
+   * Get version, content file and folder parent ids
+   * @param categoryList
+   * @returns
+   */
+  async getCategoryIds(operationLogs: Record<string, any>[]): Promise<Record<string, any>> {
+    let versionIds: string[] = [];
+    let contentIds: string[] = [];
+    let fileIds: string[] = [];
+    let folderIds: string[] = [];
+
+    let versionObject: Record<string, any> = {};
+    let contentObject: Record<string, any> = {};
+    let fileObject: Record<string, any> = {};
+    let folderObject: Record<string, any> = {};
+
+    operationLogs.forEach((log) => {
+      log.category.versionId && versionIds.push(log.category.versionId);
+      log.category.contentId && contentIds.push(log.category.contentId);
+      log.category.fileId && fileIds.push(log.category.fileId);
+      log.category.folderId && folderIds.push(log.category.folderId);
+    });
+
+    if (versionIds.length > 0) {
+      const versionList = await Service.version.list.getDetailObjectByIds(versionIds, 'id contentId');
+      contentIds = contentIds.concat(_.map(versionList, 'contentId'));
+      versionObject = _.keyBy(versionList, 'id');
+    }
+
+    if (contentIds.length > 0) {
+      const contentList = await Service.content.list.getDetailObjectByIds(contentIds, 'id fileId');
+      fileIds = fileIds.concat(_.map(contentList, 'fileId'));
+      contentObject = _.keyBy(contentList, 'id');
+    }
+
+    if (fileIds.length > 0) {
+      const fileList = await Service.file.list.getDetailObjectByIds(fileIds, 'id folderId');
+      folderIds = folderIds.concat(_.map(fileList, 'folderId'));
+      fileObject = _.keyBy(fileList, 'id');
+    }
+
+    if (folderIds.length > 0) {
+      const folderList = await Service.folder.list.getDetailObjectByIds(folderIds, 'id applicationId ');
+      folderObject = _.keyBy(folderList, 'id');
+    }
+
+    return { version: versionObject, content: contentObject, file: fileObject, folder: folderObject };
   }
 }

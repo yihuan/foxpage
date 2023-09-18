@@ -7,6 +7,7 @@ export type TRecord<T> = Record<string, T>;
 
 export interface FoxCtx extends Context {
   operations: any[];
+  contentLogs: any[];
   transactions: any[];
   userInfo: {
     id: string;
@@ -29,6 +30,7 @@ export interface FoxCtx extends Context {
     response?: any;
     user: string;
   };
+  request: any;
 }
 
 // Common response
@@ -36,6 +38,7 @@ export interface ResMsg {
   code: number;
   status?: number;
   msg?: string;
+  data?: any;
 }
 
 export interface PageSize {
@@ -69,6 +72,8 @@ export interface SearchModel extends Partial<PageSize> {
 export interface Creator {
   id: string;
   account: string;
+  nickName?: string;
+  email?: string;
 }
 
 export interface Header {
@@ -104,4 +109,10 @@ export interface NameVersion {
 export interface IdVersion {
   id: string;
   version: string;
+}
+
+export interface DBQuery {
+  type: string;
+  model: any;
+  data: any;
 }

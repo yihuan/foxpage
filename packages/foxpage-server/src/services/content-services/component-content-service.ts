@@ -11,20 +11,20 @@ import {
   ResourceType,
 } from '@foxpage/foxpage-server-types';
 
-import { TYPE } from '../../../config/constant';
+import { COMPONENT_TYPE, PRE, TYPE, VERSION } from '../../../config/constant';
 import * as Model from '../../models';
 import { ComponentContentInfo, ComponentInfo, ComponentNameVersion } from '../../types/component-types';
 import {
   AppNameVersion,
   AppTypeContent,
   ComponentRecursive,
-  ContentLiveVersion,
   ContentVersionString,
   NameVersion,
   NameVersionContent,
   NameVersionPackage,
 } from '../../types/content-types';
-import { TRecord } from '../../types/index-types';
+import { FoxCtx, TRecord } from '../../types/index-types';
+import { generationId } from '../../utils/tools';
 import { BaseService } from '../base-service';
 import * as Service from '../index';
 
@@ -64,14 +64,16 @@ export class ComponentContentService extends BaseService<Content> {
    */
   getComponentInfoRecursive(schemas: DslSchemas[]): NameVersion[] {
     let componentInfo: NameVersion[] = [];
-    schemas?.forEach((schema) => {
-      schema.name && componentInfo.push({ name: schema.name, version: schema.version || '' });
+    for (const schema of schemas || []) {
+      if (schema.type === COMPONENT_TYPE.REACT_COMPONENT) {
+        schema.name && componentInfo.push({ name: schema.name, version: schema.version || '' });
+      }
 
       if (schema.children && schema.children.length > 0) {
         const children = this.getComponentInfoRecursive(schema.children);
         componentInfo = componentInfo.concat(children);
       }
-    });
+    }
 
     return componentInfo;
   }
@@ -94,9 +96,17 @@ export class ComponentContentService extends BaseService<Content> {
       deleted: false,
     });
 
+    // replace reference component
+    fileList.forEach((file) => {
+      if (file.tags && file.tags.length > 0) {
+        const referTag = _.find(file.tags, { type: 'reference' });
+        referTag?.reference && (file.id = referTag.reference.id || '');
+      }
+    });
+
     // Get the corresponding contentIds under the file
     let contentVersionString: ContentVersionString[] = [];
-    let contentVersionNumber: ContentLiveVersion[] = [];
+    let contentLiveIdObject: Record<string, string> = {};
     const contentList = await Service.content.file.getContentByFileIds(_.map(fileList, 'id'));
     const contentNameObject: Record<string, Content> = _.keyBy(contentList, 'title');
     componentInfos.forEach((component) => {
@@ -105,28 +115,25 @@ export class ComponentContentService extends BaseService<Content> {
           contentId: contentNameObject[component.name].id,
           version: component.version,
         });
-      } else {
-        contentVersionNumber.push(_.pick(contentNameObject[component.name], ['id', 'liveVersionNumber']));
+      } else if (contentNameObject[component.name]) {
+        contentLiveIdObject[contentNameObject[component.name].id] =
+          contentNameObject[component.name]?.liveVersionId || '';
       }
     });
 
     // Get content containing different versions of the same component
     const versionList = await Promise.all([
-      Service.version.list.getContentInfoByIdAndNumber(contentVersionNumber),
+      Service.version.list.getVersionListChunk(_.values(contentLiveIdObject)),
       Service.version.list.getContentInfoByIdAndVersion(contentVersionString),
     ]);
 
     const contentIdObject: Record<string, Content> = _.keyBy(contentList, 'id');
-    const liveVersionObject: Record<string, ContentLiveVersion> = _.keyBy(contentVersionNumber, 'id');
     const componentList: Component[] = _.flatten(versionList).map((version) => {
       return Object.assign(
         {
           name: contentIdObject[version.contentId].title,
           version:
-            showLiveVersion ||
-            version.versionNumber !== liveVersionObject[version.contentId]?.liveVersionNumber
-              ? version.version
-              : '',
+            showLiveVersion || version.id !== contentLiveIdObject[version.contentId] ? version.version : '',
           type: TYPE.COMPONENT,
         },
         version.content,
@@ -141,11 +148,21 @@ export class ComponentContentService extends BaseService<Content> {
    * @param  {ContentVersion[]} componentList
    * @returns Promise
    */
-  getComponentResourceIds(componentList: Component[]): string[] {
+  getComponentResourceIds(componentList: Component[], types?: string[]): string[] {
     let componentIds: string[] = [];
     componentList.forEach((component) => {
-      const item = <Record<string, string>>component?.resource?.entry || {};
-      componentIds = componentIds.concat(_.pull(_.values(item), ''));
+      let item = <Record<string, string>>component?.resource?.entry || {};
+      if (types && types.length > 0) {
+        item = _.pick(item, types || []);
+      }
+
+      _.forIn(item, (value) => {
+        if (_.isString(value)) {
+          componentIds.push(value);
+        } else if ((value as any)?.contentId) {
+          componentIds.push((value as any).contentId);
+        }
+      });
     });
 
     return _.filter(componentIds, (id) => _.isString(id));
@@ -354,20 +371,42 @@ export class ComponentContentService extends BaseService<Content> {
    * @returns {NameVersionPackage[]} Promise
    */
   async getAppComponentByNameVersion(params: AppNameVersion): Promise<NameVersionPackage[]> {
+    let nameVersions = _.cloneDeep(params.contentNameVersion || []);
+    const nameVersionObject = _.keyBy(_.cloneDeep(params.contentNameVersion || []), 'name');
+
     // Get the fileIds of the specified name of the specified application
     const fileList = await Service.file.info.getFileIdByNames({
       applicationId: params.applicationId,
-      type: params.type || '',
-      fileNames: _.map(params.contentNameVersion, 'name'),
+      type: _.isString(params.type) ? [params.type] : [],
+      fileNames: _.keys(nameVersionObject),
+    });
+
+    let canaryFileIds: string[] = [];
+    // replace reference component, reference component do not return canary version
+    fileList.forEach((file) => {
+      const referTag = _.find(file.tags, { type: 'reference' });
+      if (referTag?.reference) {
+        file.id = referTag.reference.id || '';
+      } else if (params.isCanary) {
+        canaryFileIds.push(file.id);
+      }
     });
 
     // Get content information through fileId
     const contentList = await Service.content.file.getContentByFileIds(_.map(fileList, 'id'));
 
+    // set canary to to nameVersions variable
+    if (params.isCanary) {
+      const needGetCanaryContentList = _.filter(contentList, (content) => {
+        return canaryFileIds.indexOf(content.fileId) !== -1;
+      });
+      nameVersions = await this.setCanaryVersion(nameVersions, needGetCanaryContentList);
+    }
+
     // Get the version details corresponding to the specified name version
     const contentVersionList = await Service.version.list.getContentVersionListByNameVersion(
       contentList,
-      params.contentNameVersion,
+      nameVersions,
     );
 
     // Get the details corresponding to different versions of contentId,
@@ -385,26 +424,61 @@ export class ComponentContentService extends BaseService<Content> {
     const contentIdObject = _.keyBy(contentList, 'id');
     const contentNameObject = _.keyBy(contentList, 'title');
 
-    params.contentNameVersion.forEach((content) => {
+    nameVersions.forEach((content) => {
       contentId = contentNameObject[content.name]?.id || '';
       version = content.version || '';
 
       if (contentVersionObject[contentId + version]) {
         componentContentList.push(
-          Object.assign({ version }, content, {
-            package: Object.assign({}, contentVersionObject[contentId + version].content, {
+          Object.assign(
+            {
               name: content.name,
-              version: contentVersionObject[contentId + version].version,
-              type: fileObject[contentIdObject[contentId].fileId]?.type,
-            }),
-          }) as NameVersionPackage,
+              version: nameVersionObject[content.name]?.version || '',
+            },
+            {
+              package: Object.assign({}, contentVersionObject[contentId + version].content, {
+                name: content.name,
+                version: contentVersionObject[contentId + version].version,
+                type: fileObject[contentIdObject[contentId].fileId]?.type,
+              }),
+            },
+          ) as NameVersionPackage,
         );
       } else {
-        componentContentList.push(content);
+        componentContentList.push(
+          Object.assign(
+            { package: { contentId: contentNameObject[content.name]?.id || '' } as any },
+            content,
+          ) as NameVersionPackage,
+        );
       }
     });
 
     return componentContentList;
+  }
+
+  async setCanaryVersion(nameVersions: NameVersion[], contentList: Content[]): Promise<NameVersion[]> {
+    const contentIds = _.map(contentList, 'id');
+    const canaryVersionList = await Service.version.list.find(
+      {
+        contentId: { $in: contentIds },
+        deleted: false,
+        status: VERSION.STATUS_CANARY,
+      },
+      'contentId version',
+    );
+    const contentObject = _.keyBy(contentList, 'title');
+    let canaryVersionObject: Record<string, ContentVersion> = {};
+    canaryVersionList.forEach((version) => {
+      !canaryVersionObject[version.contentId] && (canaryVersionObject[version.contentId] = version);
+    });
+    nameVersions.forEach((item) => {
+      if (canaryVersionObject[contentObject[item.name]?.id]) {
+        item.version = canaryVersionObject[contentObject[item.name].id].version || '';
+      }
+    });
+
+    return nameVersions;
   }
 
   /**
@@ -419,28 +493,69 @@ export class ComponentContentService extends BaseService<Content> {
 
     // Get contentIds
     if (contentIds.length === 0) {
-      contentInfo = await Service.content.list.getAppContentList(_.pick(params, ['applicationId', 'type']));
+      contentInfo = await Service.content.list.getAppContentList(params);
     } else {
       // Check whether contentIds is under the specified appId
-      contentInfo = await Service.content.list.getDetailByIds(contentIds);
-      contentInfo = _.filter(contentInfo, { deleted: false });
+      contentInfo = await Service.content.list.getContentInfo({
+        applicationId: params.applicationId,
+        contentIds,
+      });
     }
 
     // Get live details
-    let contentVersionList: ContentVersion[] = [];
-    if (contentInfo.length > 0) {
-      const contentLiveIds = contentInfo.map((content) => _.pick(content, ['id', 'liveVersionNumber']));
-      contentVersionList = await Service.version.list.getContentInfoByIdAndNumber(contentLiveIds);
-    }
+    const contentVersionList: ContentVersion[] = await Service.version.list.getVersionListChunk(
+      _.map(contentInfo, 'liveVersionId') as string[],
+    );
 
     const contentObject = _.keyBy(contentInfo, 'id');
 
     // Data returned by splicing
     return contentVersionList.map((contentVersion) => {
-      return Object.assign(
-        { name: contentObject[contentVersion.contentId].title },
-        { version: contentVersion.version, package: contentVersion.content as ComponentDSL },
-      );
+      return {
+        name: contentObject[contentVersion.contentId].title,
+        version: contentVersion.version,
+        package: contentVersion.content as ComponentDSL,
+        deprecated: (<any>contentObject[contentVersion.contentId]).deprecated,
+      };
     });
+  }
+
+  /**
+   * Clone package content
+   * @param targetFileId
+   * @param sourceFileId
+   * @param options
+   */
+  async cloneContent(targetFileId: string, sourceFileId: string, options: { ctx: FoxCtx }): Promise<void> {
+    const contentList = await Service.content.file.getContentByFileIds([sourceFileId]);
+    const contentInfo = contentList[0] || {};
+    const contentId = contentInfo?.id || '';
+    if (contentId) {
+      const contentDetail = Service.content.info.create(
+        {
+          id: generationId(PRE.CONTENT),
+          title: _.trim(contentInfo?.title) || '',
+          fileId: targetFileId,
+          creator: options.ctx.userInfo.id,
+        },
+        options,
+      );
+
+      const versionInfo = await Service.version.info.getDetail({
+        contentId,
+        versionNumber: contentInfo?.liveVersionNumber,
+      });
+      Service.version.info.create(
+        {
+          id: generationId(PRE.CONTENT_VERSION),
+          contentId: contentDetail.id,
+          version: versionInfo.version || '0.0.1',
+          versionNumber: versionInfo.versionNumber || 1,
+          content: Object.assign({ id: contentDetail.id }, versionInfo.content || {}),
+          creator: options.ctx.userInfo.id,
+        },
+        options,
+      );
+    }
   }
 }

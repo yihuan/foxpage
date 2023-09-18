@@ -7,7 +7,7 @@ import { OpenAPI, ResponseSchema } from 'routing-controllers-openapi';
 import { FileTypes, StoreGoods } from '@foxpage/foxpage-server-types';
 
 import { i18n } from '../../../app.config';
-import { LOG, PRE, TYPE } from '../../../config/constant';
+import { PRE, TYPE } from '../../../config/constant';
 import { FoxCtx, ResData } from '../../types/index-types';
 import { AddGoodsToStoreReq, GetStorePackageListRes } from '../../types/validates/store-validate-types';
 import * as Response from '../../utils/response';
@@ -47,7 +47,7 @@ export class AddGoodsToStore extends BaseController {
       const [goodsDetail, fileDetail, fileContentList] = await Promise.all([
         this.service.store.goods.getDetailByTypeId(params.id),
         this.service.file.info.getDetailById(params.id),
-        this.service.content.list.getContentObjectByFileIds([params.id]),
+        this.service.content.list.getFileContentList([params.id]),
       ]);
 
       // online
@@ -55,12 +55,12 @@ export class AddGoodsToStore extends BaseController {
         return Response.warning(i18n.store.goodsExist, 2130101);
       }
 
-      if (!fileDetail || fileDetail.deleted) {
+      if (this.notValid(fileDetail)) {
         return Response.warning(i18n.store.invalidTypeId, 2130102);
       }
 
-      const contentLiveNumbers = _.pull(_.map(fileContentList, 'liveVersionNumber'), 0);
-      if (contentLiveNumbers.length === 0) {
+      const contentLiveIds = _.pull(_.map(fileContentList?.[params.id] || [], 'liveVersionId'), '');
+      if (contentLiveIds.length === 0) {
         return Response.warning(i18n.store.mustHasLiveVersion, 2130103);
       }
 
@@ -92,13 +92,6 @@ export class AddGoodsToStore extends BaseController {
       }
 
       const newGoodsDetail = await this.service.store.goods.getDetailById(goodsId);
-
-      // Save log
-      ctx.operations.push(
-        ...this.service.log.addLogItem(goodsDetail ? LOG.UPDATE : LOG.CREATE, newGoodsDetail, {
-          dataType: fileDetail.type,
-        }),
-      );
 
       return Response.success(newGoodsDetail, 1130101);
     } catch (err) {

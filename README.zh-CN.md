@@ -1,16 +1,16 @@
 <p align="center">
-  <!-- <a href="https://console.foxfamily.io/page/#"> -->
+  <!-- <a href="https://www.foxpage.io/page/#"> -->
     <img src="https://www.foxpage.io/logo.jpg" width="260px" alt="Foxpage logo" />
   <!-- </a> -->
 </p>
 <h1 align="center">Foxpage</h1>
 <h4 align="center">Low-code, made simple and fast</h4>
-<!-- <p align="center"><a href="https://console.foxfamily.io/page/#/">在线体验</a></p> -->
+<!-- <p align="center"><a href="https://www.foxpage.io/page/#/">在线体验</a></p> -->
 <br />
 
 <p align="center">
   <img src="https://img.shields.io/badge/node-%3E%3D14.15.1-brightgreen" alt="Node Version" />
-  <img src="https://badgen.net/badge/typescript/%3E=4.3.0" alt="Typescript Version" />
+  <img src="https://img.shields.io/badge/typescript-%3E%3D4.3.0-brightgreen" alt="Typescript Version" />
   <img src="https://img.shields.io/badge/yarn-1.22.5-blue" alt="Yarn Version" />
   <img src="https://img.shields.io/badge/npm-%3E%3D6.14.x-blue" alt="NPM Version" />
 </p>
@@ -18,6 +18,8 @@
 Foxpage 是一个轻量级前端低代码框架。
 
 [English](./README.md) | 简体中文
+
+<a href="https://www.foxpage.io/#/guide" target="_blank">阅读使用教程</a>
 
 ## 特性
 
@@ -35,13 +37,10 @@ Foxpage 是一个轻量级前端低代码框架。
   |   ├─foxpage-admin                // foxpage portal
   │   ├─foxpage-server               // foxpage server
   │   ├─foxpage-server-types         // foxpage types
-  │   ├─foxpage-plugin-aws-s3        // foxpage aws s3 plugin
-  │   ├─foxpage-plugin-unpkg         // foxpage unpkg plugin
+  │   ├─foxpage-visual-editor         // foxpage visual editor
 ```
 
 ## 开始使用
-
-<a href="https://console.foxfamily.io/#/guide" target="_blank">阅读入门教程</a> 或者按照以下步骤操作:
 
 ### ⏳ 安装
 
@@ -54,17 +53,17 @@ $ yarn boot
 ##### 启动 API 服务
 
 ```shell
-$ npm run start-server:prod
+$ yarn run start-server:prod
 
 # 启动成功后，初始化数据
-$ npm run init-server:prod
+$ yarn run init-server:prod
 
 ```
 
 ##### 启动前端服务
 
 ```shell
-$ npm run start-admin:prod
+$ yarn run start-admin:prod
 ```
 
 ### 🖐 系统要求
@@ -78,22 +77,22 @@ $ npm run start-admin:prod
 
 ## 成为贡献者
 
-在向项目提交拉取请求之前，请阅读我们的 [贡献指南](https://console.foxfamily.io/#/guide/contribute)。
+在向项目提交拉取请求之前，请阅读我们的 [贡献指南](https://www.foxpage.io/#/guide/contribute)。
 
 ## 社区支持
 
-有关 Foxpage 使用的一般帮助，请参阅 [Foxpage 官方文档](https://console.foxfamily.io/)。 如需其他帮助，您可以使用以下渠道之一提出问题:
+有关 Foxpage 使用的一般帮助，请参阅 [Foxpage 官方文档](https://www.foxpage.io/)。 如需其他帮助，您可以使用以下渠道之一提出问题:
 
 - [GitHub](https://github.com/foxpage/foxpage) (错误报告，贡献)
 
 ## 文档中心
 
-- [开发者文档](https://console.foxfamily.io/#/developer)
-- [用户指南](https://console.foxfamily.io/#/course)
+- [开发者文档](https://www.foxpage.io/#/developer)
+- [用户指南](https://www.foxpage.io/#/course)
 
 <!-- ## 在线体验
 
-通过访问带有示例数据的 [Foxpage 项目](https://console.foxfamily.io/page/#/)，了解系统。 -->
+通过访问带有示例数据的 [Foxpage 项目](https://www.foxpage.io/#/page/)，了解系统。 -->
 
 ## 使用许可
 

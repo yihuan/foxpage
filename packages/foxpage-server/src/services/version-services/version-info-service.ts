@@ -1,17 +1,20 @@
+import dayjs from 'dayjs';
 import _ from 'lodash';
 
 import {
+  Component,
   Content,
   ContentStatus,
   ContentVersion,
   DSL,
   DslRelation,
   DslSchemas,
-  FileTypes,
 } from '@foxpage/foxpage-server-types';
+import { DateTime } from '@foxpage/foxpage-shared';
 
-import { LOG, PRE, TYPE, VERSION } from '../../../config/constant';
+import { ACTION, LOG, PRE, TYPE, VERSION } from '../../../config/constant';
 import * as Model from '../../models';
+import { ComponentContentInfo } from '../../types/component-types';
 import {
   ContentVersionNumber,
   NameVersion,
@@ -49,9 +52,18 @@ export class VersionInfoService extends BaseService<ContentVersion> {
    * New version details are added, only query statements required by the transaction are generated,
    * and the details of the created version are returned
    * @param  {Partial<ContentVersion>} params
+   * @param {ignoreUserLog} do not save to content log
    * @returns ContentVersion
    */
-  create(params: Partial<ContentVersion>, options: { ctx: FoxCtx; fileId?: string }): ContentVersion {
+  create(
+    params: Partial<ContentVersion>,
+    options: {
+      ctx: FoxCtx;
+      fileId?: string;
+      actionDataType?: string;
+      ignoreUserLog?: boolean;
+    },
+  ): ContentVersion {
     const invalidRelations = Service.version.check.relation(params.content?.relation || {});
     if (invalidRelations.length > 0) {
       throw new Error('Invalid content relation:' + invalidRelations.join(', '));
@@ -63,21 +75,24 @@ export class VersionInfoService extends BaseService<ContentVersion> {
       version: params.version || '0.0.1',
       versionNumber: params.versionNumber || 1,
       status: <ContentStatus>(params.status || VERSION.STATUS_BASE),
-      content: Object.assign({ id: params.contentId }, params.content || {}),
+      content: Object.assign({}, params.content || {}, { id: params.contentId }),
       creator: params.creator || options.ctx.userInfo.id,
     };
 
     options.ctx.transactions.push(Model.version.addDetailQuery(versionDetail));
-    options.ctx.operations.push({
-      action: LOG.CREATE,
-      category: LOG.CATEGORY_APPLICATION,
-      content: {
-        id: versionDetail.id,
-        contentId: params.contentId,
-        fileId: options?.fileId,
-        after: versionDetail,
-      },
-    });
+    if (!options.ignoreUserLog) {
+      Service.userLog.addLogItem(
+        { id: versionDetail.id },
+        {
+          ctx: options.ctx,
+          actions: [LOG.CREATE, options.actionDataType || '', TYPE.VERSION],
+          category: {
+            versionId: versionDetail.id,
+            contentId: params.contentId,
+          },
+        },
+      );
+    }
 
     return versionDetail;
   }
@@ -92,9 +107,9 @@ export class VersionInfoService extends BaseService<ContentVersion> {
    */
   async updateVersionDetail(
     params: UpdateContentVersion,
-    options: { ctx: FoxCtx },
+    options: { ctx: FoxCtx; actionDataType?: string },
   ): Promise<Record<string, number | string | string[]>> {
-    if ((<DSL>params.content).relation) {
+    if (params.content && (<DSL>params.content).relation) {
       const invalidRelations = Service.version.check.relation((<DSL>params.content).relation || {});
       if (invalidRelations.length > 0) {
         return { code: 5, data: invalidRelations };
@@ -107,12 +122,12 @@ export class VersionInfoService extends BaseService<ContentVersion> {
     ]);
 
     // Check required fields
-    if (!contentDetail) {
+    if (this.notValid(contentDetail)) {
       return { code: 1 };
     }
 
     // Check if the version already exists
-    if (params.version && (!versionDetail || params.version !== versionDetail.version)) {
+    if (params.version && (this.notValid(versionDetail) || params.version !== versionDetail.version)) {
       const versionExist = await Service.version.check.versionExist(params.id, params.version);
       if (versionExist) {
         return { code: 3 };
@@ -122,6 +137,16 @@ export class VersionInfoService extends BaseService<ContentVersion> {
     const missingFields = await Service.version.check.contentFields(contentDetail.fileId, params.content);
     if (missingFields.length > 0) {
       return { code: 4, data: missingFields };
+    }
+
+    const contentUpdateTime = versionDetail?.contentUpdateTime || '';
+    if (
+      contentUpdateTime &&
+      params.contentUpdateTime &&
+      dayjs(params.contentUpdateTime).unix() < dayjs(contentUpdateTime).unix()
+    ) {
+      // version content update time not equal last update time
+      return { code: 5 };
     }
 
     let versionId = versionDetail?.id || '';
@@ -136,20 +161,21 @@ export class VersionInfoService extends BaseService<ContentVersion> {
 
     // Update
     params.content.id = params.id;
-    (<DSL>params.content).version = '1.0'; // default dsl version
-    console.log(params.content);
+    (<DSL>params.content).version = '0.0.1'; // default dsl version
     options.ctx.transactions.push(
       Model.version.updateDetailQuery(versionId, {
         version: version,
         versionNumber: Service.version.number.createNumberFromVersion(version),
         content: params.content,
+        contentUpdateTime: new DateTime() as any,
       }),
     );
 
-    // Save logs
-    options.ctx.operations.push(
-      ...Service.log.addLogItem(LOG.VERSION_UPDATE, versionDetail, { fileId: contentDetail.fileId }),
-    );
+    Service.userLog.addLogItem(versionDetail, {
+      ctx: options.ctx,
+      actions: [LOG.UPDATE, options.actionDataType || '', TYPE.VERSION],
+      category: { contentId: params.id, versionId },
+    });
 
     return { code: 0, data: versionId };
   }
@@ -163,7 +189,7 @@ export class VersionInfoService extends BaseService<ContentVersion> {
   updateVersionItem(
     id: string,
     params: Partial<ContentVersion>,
-    options: { ctx: FoxCtx; fileId?: string },
+    options: { ctx: FoxCtx; actionDataType?: string },
   ): void {
     if ((<DSL>params.content).relation) {
       const invalidRelations = Service.version.check.relation((<DSL>params.content).relation || {});
@@ -173,10 +199,15 @@ export class VersionInfoService extends BaseService<ContentVersion> {
     }
 
     options.ctx.transactions.push(Model.version.updateDetailQuery(id, params));
-    options.ctx.operations.push(
-      ...Service.log.addLogItem(LOG.VERSION_UPDATE, Object.assign({ id }, params), {
-        fileId: options?.fileId,
-      }),
+    Service.userLog.addLogItem(
+      { id: id },
+      {
+        ctx: options.ctx,
+        actions: [LOG.UPDATE, options.actionDataType || '', TYPE.VERSION],
+        category: {
+          versionId: id,
+        },
+      },
     );
   }
 
@@ -189,15 +220,15 @@ export class VersionInfoService extends BaseService<ContentVersion> {
    */
   async getMaxContentVersionDetail(
     contentId: string,
-    options: { ctx: FoxCtx; createNew?: boolean },
+    options?: { ctx: FoxCtx; createNew?: boolean },
   ): Promise<ContentVersion> {
-    const createNew = options.createNew || false;
+    const createNew = options?.createNew || false;
     let versionDetail = await Model.version.getMaxVersionDetailById(contentId);
     if (
       createNew &&
       (!versionDetail || versionDetail.status !== VERSION.STATUS_BASE || versionDetail.deleted)
     ) {
-      versionDetail = await this.createNewContentVersion(contentId, { ctx: options.ctx });
+      versionDetail = await this.createNewContentVersion(contentId, { ctx: options?.ctx as FoxCtx });
     }
 
     return versionDetail || {};
@@ -220,7 +251,7 @@ export class VersionInfoService extends BaseService<ContentVersion> {
    * @memberof VersionService
    */
   async createNewContentVersion(contentId: string, options: { ctx: FoxCtx }): Promise<ContentVersion> {
-    const newVersionDetail = (await this.getContentLatestVersion({ contentId })) || {};
+    const newVersionDetail = await this.getContentLatestVersion({ contentId });
 
     // Set new version information
     newVersionDetail.id = generationId(PRE.CONTENT_VERSION);
@@ -231,11 +262,15 @@ export class VersionInfoService extends BaseService<ContentVersion> {
     newVersionDetail.versionNumber = Service.version.number.createNumberFromVersion(
       newVersionDetail?.version,
     );
+    newVersionDetail.pictures = [];
+    newVersionDetail.createTime = new DateTime() as any;
+    newVersionDetail.updateTime = new DateTime() as any;
     newVersionDetail.creator = options.ctx.userInfo.id;
 
     // Save
     options.ctx.transactions.push(Model.version.addDetailQuery(newVersionDetail));
-    return newVersionDetail;
+
+    return _.cloneDeep(newVersionDetail);
   }
 
   /**
@@ -246,16 +281,15 @@ export class VersionInfoService extends BaseService<ContentVersion> {
    */
   async setVersionDeleteStatus(
     params: TypeStatus,
-    options: { ctx: FoxCtx },
+    options: { ctx: FoxCtx; actionType?: string },
   ): Promise<Record<string, number>> {
     const versionDetail = await this.getDetailById(params.id);
-    if (!versionDetail) {
+    if (this.notValid(versionDetail)) {
       return { code: 1 }; // Invalid version information
     }
 
     const contentDetail = await Service.content.info.getDetailById(versionDetail.contentId);
 
-    // TODO In the current version of the live state, you need to check whether the content is referenced
     if (params.status && contentDetail?.liveVersionNumber === versionDetail.versionNumber) {
       return { code: 2 }; // Can not be deleted
     }
@@ -263,7 +297,10 @@ export class VersionInfoService extends BaseService<ContentVersion> {
     // Set the enabled state
     options.ctx.transactions.push(this.setDeleteStatus(params.id, params.status));
     options.ctx.operations.push(
-      ...Service.log.addLogItem(LOG.VERSION_REMOVE, [versionDetail], { fileId: contentDetail?.fileId }),
+      ...Service.log.addLogItem(LOG.VERSION_REMOVE, [versionDetail], {
+        actionType: options.actionType || [LOG.DELETE, TYPE.VERSION].join('_'),
+        fileId: contentDetail?.fileId,
+      }),
     );
 
     return { code: 0 };
@@ -276,11 +313,16 @@ export class VersionInfoService extends BaseService<ContentVersion> {
    */
   batchSetVersionDeleteStatus(
     versionList: ContentVersion[],
-    options: { ctx: FoxCtx; status?: boolean },
+    options: { ctx: FoxCtx; status?: boolean; actionType?: string },
   ): void {
-    const status = options.status === false ? false : true;
+    const status = !(options.status === false);
     options.ctx.transactions.push(this.setDeleteStatus(_.map(versionList, 'id'), status));
-    options.ctx.operations.push(...Service.log.addLogItem(LOG.VERSION_REMOVE, versionList));
+    options.ctx.operations.push(
+      ...Service.log.addLogItem(LOG.VERSION_REMOVE, versionList, {
+        actionType: options.actionType || [LOG.DELETE, TYPE.VERSION].join('_'),
+        category: { type: TYPE.VERSION },
+      }),
+    );
   }
 
   /**
@@ -344,7 +386,7 @@ export class VersionInfoService extends BaseService<ContentVersion> {
    */
   async getContentLatestVersion(params: SearchLatestVersion): Promise<ContentVersion> {
     const version = await Model.version.getLatestVersionInfo(params);
-    return version as ContentVersion;
+    return (version as ContentVersion) || {};
   }
 
   /**
@@ -363,7 +405,7 @@ export class VersionInfoService extends BaseService<ContentVersion> {
       const contentDetail = await Service.content.info.getDetailById(contentId);
       versionDetail = await Service.version.number.getContentByNumber({
         contentId,
-        versionNumber: contentDetail?.liveVersionNumber || 0,
+        versionNumber: contentDetail?.liveVersionNumber || 1,
       });
     }
 
@@ -405,7 +447,6 @@ export class VersionInfoService extends BaseService<ContentVersion> {
    * @returns Promise
    */
   async getTemplateDetailFromPage(
-    applicationId: string,
     pageVersion: ContentVersion,
     options?: { isLive: boolean },
   ): Promise<Partial<ContentVersion>> {
@@ -418,8 +459,6 @@ export class VersionInfoService extends BaseService<ContentVersion> {
     if (templateId) {
       if (liveTemplateVersion) {
         const templateVersions = await Service.version.live.getContentLiveDetails({
-          applicationId: applicationId,
-          type: TYPE.TEMPLATE as FileTypes,
           contentIds: [templateId],
         });
         templateVersion = templateVersions[0] || {};
@@ -458,12 +497,18 @@ export class VersionInfoService extends BaseService<ContentVersion> {
       create?: boolean;
       versionId?: string;
       setLive?: boolean;
+      idMaps?: Record<string, string>;
     },
-  ): Record<string, Record<string, string>> {
+  ): Record<string, any> {
     const dsl = _.cloneDeep(sourceContentVersion);
     dsl.id = contentId;
     // Process the structureId value in schemes and replace the content id value in relation
-    dsl.schemas = this.changeDSLStructureIdRecursive(sourceContentVersion.schemas);
+    const dslSchemaAndIdMap = this.changeDSLStructureIdRecursive(
+      sourceContentVersion.schemas,
+      options.idMaps,
+    );
+    dsl.schemas = dslSchemaAndIdMap.schemas;
+    const idMaps = dslSchemaAndIdMap.idMaps || {};
 
     if (dsl.relation) {
       for (const key in dsl.relation) {
@@ -473,14 +518,14 @@ export class VersionInfoService extends BaseService<ContentVersion> {
           dsl.relation[key].id = options.tempRelations[dsl.relation[key].id].newId;
           options.relations[dsl.relation[key].id] = options.tempRelations[dsl.relation[key].id];
         } else {
-          const contentId = generationId(PRE.CONTENT);
-          const contentName = key.split(':')[0] || '';
-          options.relations[dsl.relation[key].id] = {
-            newId: contentId,
-            oldName: contentName,
-            newName: [contentName, randStr(4)].join('_'),
-          };
-          dsl.relation[key].id = contentId;
+          // const contentId = generationId(PRE.CONTENT);
+          // const contentName = key.split(':')[0] || '';
+          // options.relations[dsl.relation[key].id] = {
+          //   newId: contentId,
+          //   oldName: contentName,
+          //   newName: [contentName, randStr(4)].join('_'),
+          // };
+          // dsl.relation[key].id = contentId;
         }
       }
     }
@@ -509,7 +554,139 @@ export class VersionInfoService extends BaseService<ContentVersion> {
       );
     }
 
-    return options.relations;
+    return { relations: options.relations, idMaps };
+  }
+
+  /**
+   * create new version data from source version
+   * replace relation key and schema dynamic fields
+   * @param sourceVersion
+   * @param idNameMaps
+   * @param changeName whether or not change the schema item name
+   * @returns
+   */
+  createCopyVersion(
+    sourceVersion: DSL,
+    idNameMaps: Record<string, any>,
+    changeName: boolean = false,
+  ): { newVersion: DSL; idNameMaps: Record<string, any> } {
+    // content id
+    let newContentId = generationId(PRE.CONTENT);
+    let relationMaps: Record<string, string> = {};
+    const sourceName = sourceVersion.schemas[0]?.name || '';
+    const newSourceName = sourceName + '_' + randStr();
+    idNameMaps[sourceVersion.id] = {
+      id: newContentId,
+      name: sourceName,
+      newName: newSourceName,
+    };
+
+    changeName && (sourceVersion.schemas[0].name = newSourceName);
+
+    // replace content relation and schemas
+    let relation: Record<string, any> = {};
+    let schemasString = JSON.stringify(sourceVersion.schemas);
+    for (const itemKey in sourceVersion.relation) {
+      const relationItem = sourceVersion.relation[itemKey] || {};
+      if (relationItem.type) {
+        let newRelationKey = '';
+        if (relationItem.type === TYPE.VARIABLE && idNameMaps[relationItem.id]) {
+          newRelationKey = itemKey.replace(
+            idNameMaps[relationItem.id].name || '',
+            idNameMaps[relationItem.id].newName || '',
+          );
+          relation[newRelationKey] = { id: idNameMaps[relationItem.id].id, type: relationItem.type };
+        } else if (
+          [TYPE.CONDITION, TYPE.FUNCTION].indexOf(relationItem.type) !== -1 &&
+          idNameMaps[relationItem.id]
+        ) {
+          newRelationKey = itemKey.replace(relationItem.id, idNameMaps[relationItem.id].id);
+          relation[newRelationKey] = { id: idNameMaps[relationItem.id].id, type: relationItem.type };
+        } else {
+          relation[itemKey] = sourceVersion.relation[itemKey];
+        }
+
+        if (newRelationKey) {
+          relationMaps[itemKey] = newRelationKey;
+          schemasString = _.replace(
+            schemasString,
+            new RegExp('{{' + _.escapeRegExp(itemKey) + '}}', 'gm'),
+            '{{' + newRelationKey + '}}',
+          );
+        }
+      } else {
+        relation[itemKey] = sourceVersion.relation[itemKey];
+      }
+    }
+
+    const schemas = this.removeInvalidStructure(JSON.parse(schemasString));
+
+    return {
+      newVersion: { id: newContentId, relation, schemas },
+      idNameMaps,
+    };
+  }
+
+  /**
+   * remove invalid structure node in schemas
+   * eg. name: system.inherit-blank-node
+   * @param schemas
+   */
+  removeInvalidStructure(schemas: DslSchemas[]): DslSchemas[] {
+    _.remove(schemas, { name: 'system.inherit-blank-node' });
+    schemas.forEach((schema) => {
+      if (schema.children && schema.children.length > 0) {
+        schema.children = this.removeInvalidStructure(schema.children);
+      }
+    });
+
+    return schemas;
+  }
+
+  /**
+   * update content schemas structure id
+   * @param schemas
+   * @param idMaps
+   * @param options
+   * @returns
+   */
+  updateSchemaIdRecursive(
+    schemas: DslSchemas[],
+    idMaps: Record<string, string> = {},
+    options: { clearExtend?: boolean; parentId?: string } = {},
+  ): {
+    schemas: DslSchemas[];
+    idMaps: Record<string, string>;
+  } {
+    const clearExtend = options.clearExtend || false;
+    const parentId = options.parentId || '';
+
+    for (const schema of schemas) {
+      const schemaId = generationId(PRE.STRUCTURE);
+      idMaps[_.clone(schema.id)] = schemaId;
+      schema.id = schemaId;
+
+      !schema.extension && (schema.extension = {});
+
+      if (clearExtend) {
+        schema.extension.parentId = parentId as string;
+      } else if (schema.extension?.parentId && idMaps[schema.extension.parentId]) {
+        schema.extension.parentId = idMaps[schema.extension.parentId];
+      }
+
+      if (schema.extension?.extendId && clearExtend) {
+        schema.extension.extendId = undefined;
+      }
+
+      if (schema.children && schema.children.length > 0) {
+        options.parentId = schemaId;
+        const childrenSchemaObject = this.updateSchemaIdRecursive(schema.children, idMaps, options);
+        schema.children = childrenSchemaObject.schemas || [];
+        idMaps = childrenSchemaObject.idMaps || {};
+      }
+    }
+
+    return { schemas, idMaps };
   }
 
   /**
@@ -517,12 +694,34 @@ export class VersionInfoService extends BaseService<ContentVersion> {
    * @param  {DslSchemas[]} schemas
    * @returns DslSchemas
    */
-  changeDSLStructureIdRecursive(schemas: DslSchemas[], parentId?: string): DslSchemas[] {
+  changeDSLStructureIdRecursive(
+    schemas: DslSchemas[],
+    idMaps: Record<string, string> = {},
+    parentId?: string,
+  ): { schemas: DslSchemas[]; idMaps: Record<string, string> } {
     // TODO structure id in props need to replace too
     (schemas || []).forEach((structure) => {
-      structure.id = generationId(PRE.STRUCTURE);
-      if (structure.parentId) {
-        structure.parentId = parentId;
+      if (!idMaps[structure.id]) {
+        const newStructureId = generationId(PRE.STRUCTURE);
+        idMaps[structure.id] = newStructureId;
+        structure.id = newStructureId;
+      } else {
+        structure.id = idMaps[structure.id];
+      }
+
+      if (structure.extension?.parentId) {
+        if (!idMaps[structure.extension.parentId]) {
+          idMaps[structure.extension.parentId] = generationId(PRE.STRUCTURE);
+        }
+        structure.extension.parentId = idMaps[structure.extension.parentId] || parentId;
+      }
+
+      if (structure.extension?.extendId) {
+        if (!idMaps[structure.extension.extendId]) {
+          idMaps[structure.extension.extendId] = generationId(PRE.STRUCTURE);
+        }
+
+        structure.extension.extendId = idMaps[structure.extension.extendId] || '';
       }
 
       if (structure.wrapper) {
@@ -530,11 +729,11 @@ export class VersionInfoService extends BaseService<ContentVersion> {
       }
 
       if (structure.children && structure.children.length > 0) {
-        this.changeDSLStructureIdRecursive(structure.children, structure.id);
+        this.changeDSLStructureIdRecursive(structure.children, idMaps, idMaps[structure.id]);
       }
     });
 
-    return schemas;
+    return { schemas, idMaps };
   }
 
   /**
@@ -558,6 +757,7 @@ export class VersionInfoService extends BaseService<ContentVersion> {
         const matchArr = matchStr.split(':');
         const matchRelationName = matchArr[0] || '';
         if (matchRelationName) {
+          const matchReg = _.replace(match, /\$/g, '\\$');
           for (const key in relations) {
             if (
               [TYPE.TEMPLATE, TYPE.CONDITION, TYPE.FUNCTION].indexOf(relation[matchStr]?.type) !== -1 &&
@@ -566,7 +766,7 @@ export class VersionInfoService extends BaseService<ContentVersion> {
               matchArr[1] = relations[key].newId;
               schemasString = _.replace(
                 schemasString,
-                new RegExp(match, 'gm'),
+                new RegExp(matchReg, 'gm'),
                 '{{' + matchArr.join(':') + '}}',
               );
               break;
@@ -574,7 +774,7 @@ export class VersionInfoService extends BaseService<ContentVersion> {
               matchArr[0] = relations[key].newName;
               schemasString = _.replace(
                 schemasString,
-                new RegExp(match, 'gm'),
+                new RegExp(matchReg, 'gm'),
                 '{{' + matchArr.join(':') + '}}',
               );
               break;
@@ -590,7 +790,8 @@ export class VersionInfoService extends BaseService<ContentVersion> {
       for (const item in relations) {
         if (
           [TYPE.TEMPLATE, TYPE.CONDITION, TYPE.FUNCTION].indexOf(relation[key]?.type) !== -1 &&
-          item === relationArr[1]
+          item === relationArr[1] &&
+          relations[item]
         ) {
           relationArr[1] = relations[item].newId;
           relation[relationArr.join(':')] = relation[key];
@@ -606,5 +807,142 @@ export class VersionInfoService extends BaseService<ContentVersion> {
     }
 
     return { schemas: JSON.parse(schemasString), relation: relation || {} };
+  }
+
+  /**
+   * Get the version's relation and component details
+   * @param versionDetail
+   * @param options
+   * @returns
+   */
+  async getPageVersionInfo(
+    versionDetail: ContentVersion,
+    options: { applicationId: string; isLive?: boolean },
+  ): Promise<Record<string, any>> {
+    const versionSchemas = versionDetail?.content?.schemas || [];
+    let componentDetailList: Component[] = [];
+    let mockObject: Record<string, any> = [];
+    [mockObject, componentDetailList] = await Promise.all([
+      !options.isLive
+        ? Service.content.mock.getMockBuildVersions([versionDetail.contentId as string])
+        : Service.content.mock.getMockLiveVersions([versionDetail.contentId as string]),
+      Service.content.component.getComponentsFromDSL(options.applicationId, versionSchemas),
+    ]);
+
+    let componentList = _.flatten(componentDetailList);
+
+    const editorComponentList = await Service.content.component.getEditorDetailFromComponent(
+      options.applicationId,
+      componentList,
+    );
+    componentList = componentList.concat(editorComponentList);
+    const idVersionList = Service.component.getEditorAndDependenceFromComponent(componentList);
+    const dependencies = await Service.component.getComponentDetailByIdVersion(idVersionList);
+    componentList = componentList.concat(_.map(dependencies, (depend) => depend?.content || {}));
+    const componentIds = Service.content.component.getComponentResourceIds(componentList);
+
+    const [resourceObject, relationObject, componentFileObject, contentAllParents] = await Promise.all([
+      Service.content.resource.getResourceContentByIds(componentIds),
+      Service.version.relation.getVersionRelations({ [versionDetail.contentId]: versionDetail }, false),
+      Service.file.list.getContentFileByIds(_.map(componentList, 'id')),
+      Service.content.list.getContentAllParents(componentIds),
+    ]);
+
+    const appResource = await Service.application.getAppResourceFromContent(contentAllParents);
+    const contentResource = Service.content.info.getContentResourceTypeInfo(appResource, contentAllParents);
+
+    // Add the resource to the component, add the editor-entry and the name of the dependencies in the component
+    componentList = Service.component.addNameToEditorAndDepends(
+      componentList as ComponentContentInfo[],
+      componentFileObject,
+    );
+    componentList = Service.content.component.replaceComponentResourceIdWithContent(
+      componentList,
+      resourceObject,
+      contentResource,
+    );
+
+    const relations = await Service.relation.formatRelationResponse(relationObject);
+
+    return { versionDetail, componentList, relations, mockObject };
+  }
+
+  /**
+   * Format the props value in mock version schemas
+   * when type is variable
+   *  action is save, format props.value from object to string
+   *  action is get, format props.value from string to object
+   * @param mockSchemas
+   * @param action save|get
+   * @param types default is ['variable']
+   * @returns
+   */
+  formatMockValue(mockSchemas: DslSchemas[], action: string, types?: string[]): DslSchemas[] {
+    if (!types || types.length === 0) {
+      types = [TYPE.VARIABLE];
+    }
+
+    if (types.indexOf(TYPE.VARIABLE) !== -1) {
+      (mockSchemas || []).forEach((item) => {
+        if (item.type === TYPE.VARIABLE && item?.props?.value) {
+          if (action === ACTION.SAVE && _.isPlainObject(item.props.value)) {
+            item.props.value = JSON.stringify(item.props.value);
+          } else if (action === ACTION.GET && _.isString(item.props.value)) {
+            item.props.value = JSON.parse(item.props.value);
+          }
+        }
+      });
+    }
+
+    return mockSchemas;
+  }
+
+  /**
+   * Update version schema structure info,
+   * include create new structureId, remove extendId, update parentId ..
+   * @param schemas
+   * @param structureIdMap
+   * @param options
+   * @returns
+   */
+  updateVersionStructureId(schemas: DslSchemas[], parentId?: string): DslSchemas[] {
+    if (schemas && schemas.length > 0) {
+      schemas.forEach((schema) => {
+        const newStructureId = generationId(PRE.STRUCTURE);
+        schema.id = newStructureId;
+
+        if (schema.extension && schema.extension.parentId) {
+          schema.extension.parentId = parentId || undefined;
+        }
+
+        if (schema.extension && schema.extension.extendId) {
+          schema.extension.extendId = undefined;
+        }
+
+        if (schema.children && schema.children.length > 0) {
+          schema.children = this.updateVersionStructureId(schema.children, newStructureId);
+        }
+      });
+    }
+
+    return schemas;
+  }
+
+  /**
+   * flatten schemas
+   * @param schemas
+   * @returns
+   */
+  flattenSchemas(schemas: DslSchemas[]): DslSchemas[] {
+    let flattenSchemas: DslSchemas[] = [];
+    (schemas || []).forEach((item) => {
+      flattenSchemas.push(_.omit(item, ['children']));
+      if (item.children && item.children.length > 0) {
+        const childrenFlattenSchemas = this.flattenSchemas(item.children);
+        flattenSchemas = flattenSchemas.concat(childrenFlattenSchemas);
+      }
+    });
+
+    return flattenSchemas;
   }
 }

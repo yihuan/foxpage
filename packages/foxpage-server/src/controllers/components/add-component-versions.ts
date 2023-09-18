@@ -56,7 +56,7 @@ export class AddComponentVersionDetail extends BaseController {
         this.service.version.check.isNewVersion(params.contentId, versionNumber),
       ]);
 
-      if (!contentDetail || contentDetail.deleted || !isNewVersion) {
+      if (this.notValid(contentDetail) || !isNewVersion) {
         return Response.warning(i18n.content.invalidContentIdOrVersionExist, 2110102);
       }
 
@@ -82,7 +82,10 @@ export class AddComponentVersionDetail extends BaseController {
         versionNumber: versionNumber,
         content: params.content,
       };
-      this.service.version.info.create(newVersionDetail, { ctx });
+      this.service.version.info.create(newVersionDetail, {
+        ctx,
+        actionDataType: TYPE.COMPONENT,
+      });
 
       await this.service.version.info.runTransaction(ctx.transactions);
 

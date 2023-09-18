@@ -6,7 +6,7 @@ module.exports = {
   plugins: ['@typescript-eslint', 'simple-import-sort', 'import'],
   extends: [
     // "eslint:recommended",
-    'prettier/@typescript-eslint',
+    'prettier',
     // 'plugin:prettier/recommended',
     // "plugin:@typescript-eslint/eslint-recommended",
     // 'plugin:@typescript-eslint/recommended',
@@ -29,7 +29,7 @@ module.exports = {
     ],
     semi: ['error', 'always'],
     'no-var': 0,
-    'comma-spacing': 0,
+    'comma-spacing': [2, { before: false, after: true }],
     camelcase: 2,
     'comma-style': [2, 'last'],
     quotes: [1, 'single'],
@@ -46,6 +46,7 @@ module.exports = {
     'no-ternary': 0,
     'prefer-const': 0,
     'no-multi-spaces': 1,
+    'object-curly-spacing': ['error', 'always'],
     'max-len': [0, 100, 2],
     'simple-import-sort/imports': [
       'error',

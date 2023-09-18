@@ -15,6 +15,7 @@ beforeEach(() => {
   ctx.logAttr = { transactionId: '' };
   ctx.operations = [];
   ctx.transactions = [];
+  ctx.userLogs = [];
   params = {
     organizationId: Data.org.id,
     name: '',
@@ -29,7 +30,7 @@ beforeEach(() => {
 describe('Post: /applications', () => {
   it('response list', async () => {
     jest.spyOn(OrgService.prototype, 'checkOrgValid').mockResolvedValueOnce(true);
-    jest.spyOn(ApplicationService.prototype, 'getDetail').mockResolvedValueOnce(Data.app.list[0]);
+    jest.spyOn(ApplicationService.prototype, 'getDetail').mockResolvedValueOnce(Data.app.list[0] as any);
     jest.spyOn(ApplicationService.prototype, 'create').mockImplementation(() => {
       return <Application>Data.app.list[0];
     });
@@ -38,7 +39,7 @@ describe('Post: /applications', () => {
     });
     jest
       .spyOn(ApplicationService.prototype, 'getAppDetailWithFolder')
-      .mockResolvedValueOnce(Object.assign({ folders: [] }, Data.app.list[0]));
+      .mockResolvedValueOnce(Object.assign({ folders: [] }, Data.app.list[0]) as any);
     jest.spyOn(ApplicationService.prototype, 'runTransaction').mockResolvedValueOnce();
 
     const result = await appInstance.index(<FoxCtx>ctx, params);
@@ -56,7 +57,7 @@ describe('Post: /applications', () => {
     jest.spyOn(OrgService.prototype, 'checkOrgValid').mockResolvedValueOnce(true);
     jest.spyOn(ApplicationService.prototype, 'getDetail').mockResolvedValueOnce(Data.app.list[0]);
     const result = await appInstance.index(<FoxCtx>ctx, params);
-    expect(result.code).toEqual(400);
+    expect(result.status).toEqual(2030102);
   });
 
   it('response error', async () => {

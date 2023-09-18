@@ -12,7 +12,9 @@ import {
   IdVersionNumbers,
 } from '@foxpage/foxpage-server-types';
 
-import { LOG } from '../../config/constant';
+import { LOG, TAG, TYPE } from '../../config/constant';
+import * as Model from '../models';
+import { AppItemSearch } from '../types/app-types';
 import { ComponentContentInfo } from '../types/component-types';
 import { UpdateContentVersion } from '../types/content-types';
 
@@ -39,7 +41,7 @@ export class ComponentService {
    */
   async updateVersionDetail(
     params: UpdateContentVersion,
-    options: { ctx: FoxCtx },
+    options: { ctx: FoxCtx; actionDataType?: string },
   ): Promise<Record<string, number | string | string[]>> {
     const versionDetail = await Service.version.info.getDetailById(params.id);
     const contentDetail = await Service.content.info.getDetailById(versionDetail.contentId || '');
@@ -57,11 +59,11 @@ export class ComponentService {
         content: params.content,
       }),
     );
-
-    // Save logs
-    options.ctx.operations.push(
-      ...Service.log.addLogItem(LOG.VERSION_UPDATE, versionDetail, { fileId: contentDetail?.fileId }),
-    );
+    Service.userLog.addLogItem(versionDetail, {
+      ctx: options.ctx,
+      actions: [LOG.UPDATE, options.actionDataType || contentDetail.type || '', TYPE.VERSION],
+      category: { versionId: params.id, contentId: versionDetail.contentId, fileId: contentDetail.fileId },
+    });
 
     return { code: 0 };
   }
@@ -86,9 +88,11 @@ export class ComponentService {
     idVersions: IdVersion[],
     componentInfos: Record<string, ContentVersion> = {},
   ): Promise<Record<string, ContentVersion>> {
-    const idNumbers = await this.getComponentVersionNumberFromVersion(idVersions);
+    const { idNumbers = [], liveVersionIds = [] } = await this.getComponentVersionNumberFromVersion(
+      idVersions,
+    );
 
-    if (idNumbers.length === 0) {
+    if (idNumbers.length === 0 && liveVersionIds.length === 0) {
       return {};
     }
 
@@ -97,14 +101,19 @@ export class ComponentService {
     });
 
     // Get component details
-    const versionList = await Service.version.list.getContentInfoByIdAndNumber(idVersionNumbers);
+    const versionList = _.flatten(
+      await Promise.all([
+        Service.version.list.getContentInfoByIdAndNumber(idVersionNumbers),
+        Service.version.list.getVersionListChunk(liveVersionIds),
+      ]),
+    );
     componentInfos = Object.assign(
       componentInfos,
       _.keyBy(versionList, (version) => [version.contentId, version.version].join('_')),
     );
 
     // Get the dependency information in the component, and exclude the component information that has been obtained
-    let dependencies = this.getComponentEditorAndDependends(_.map(versionList, 'content'));
+    let dependencies = this.getComponentEditorAndDependence(_.map(versionList, 'content'));
     dependencies = _.dropWhile(
       dependencies,
       (item) => componentInfos[[item.id, item?.version || ''].join('_')],
@@ -130,27 +139,29 @@ export class ComponentService {
    * @param  {IdVersion[]} idVersions
    * @returns Promise
    */
-  async getComponentVersionNumberFromVersion(idVersions: IdVersion[]): Promise<IdVersionNumbers[]> {
+  async getComponentVersionNumberFromVersion(idVersions: IdVersion[]): Promise<{
+    idNumbers: IdVersionNumbers[];
+    liveVersionIds: string[];
+  }> {
     let idVersionNumbers: IdVersionNumbers[] = [];
-    let liveIdVersions: IdVersion[] = [];
+    let liveIdVersions: string[] = [];
 
     idVersions.forEach((item) => {
       if (item.version) {
         const versionNumber = Service.version.number.createNumberFromVersion(item.version);
         idVersionNumbers.push(Object.assign({}, item, { versionNumber }));
       } else {
-        liveIdVersions.push(item); // Get the live version
+        liveIdVersions.push(item.id); // Get the live version
       }
     });
 
+    let liveVersionIds: string[] = [];
     if (liveIdVersions.length > 0) {
-      const contentList = await Service.content.list.getDetailByIds(_.map(liveIdVersions, 'id'));
-      contentList.forEach((content) => {
-        idVersionNumbers.push({ id: content.id, version: '', versionNumber: content.liveVersionNumber });
-      });
+      const contentLiveMap = await Service.content.list.getContentLiveIds(liveIdVersions);
+      liveVersionIds = _.values(contentLiveMap);
     }
 
-    return idVersionNumbers;
+    return { idNumbers: idVersionNumbers, liveVersionIds };
   }
 
   /**
@@ -158,11 +169,16 @@ export class ComponentService {
    * @param  {ContentVersion[]} versionList
    * @returns IdVersion
    */
-  getComponentEditorAndDependends(versionList: Component[]): IdVersion[] {
+  getComponentEditorAndDependence(versionList: Component[], types?: string[]): IdVersion[] {
     let componentIdVersion: IdVersion[] = [];
     versionList.forEach((version) => {
-      componentIdVersion = componentIdVersion.concat(version?.resource?.['editor-entry'] || []);
-      componentIdVersion = componentIdVersion.concat(version?.resource?.dependencies || []);
+      if (!types || types.indexOf('editor-entry') !== -1) {
+        componentIdVersion = componentIdVersion.concat(version?.resource?.['editor-entry'] || []);
+      }
+
+      if (!types || types.indexOf('dependencies') !== -1) {
+        componentIdVersion = componentIdVersion.concat(version?.resource?.dependencies || []);
+      }
     });
     return _.uniqWith(componentIdVersion, _.isEqual);
   }
@@ -212,7 +228,7 @@ export class ComponentService {
 
   /**
    * Get component resource host and path by content ids
-   * 
+   *
    * entry: { node:'cont_gyEx3GoTu5cCMGY' }
    * =>
    * entry: {
@@ -230,7 +246,7 @@ export class ComponentService {
   async getComponentResourcePath(versionContent: ComponentDSL): Promise<ComponentDSL> {
     // Get the corresponding resource information in the component
     const contentIds = Service.content.component.getComponentResourceIds(<Component[]>[versionContent]);
-    const idVersion = this.getComponentEditorAndDependends(<Component[]>[versionContent]);
+    const idVersion = this.getComponentEditorAndDependence(<Component[]>[versionContent]);
     const editorContentIds = _.map(idVersion, 'id');
     const fileContentObject = await Service.file.list.getContentFileByIds(editorContentIds);
     contentIds.push(...editorContentIds);
@@ -272,5 +288,156 @@ export class ComponentService {
     );
 
     return versionContent;
+  }
+
+  /**
+   * Get component file info by app id and component name
+   * @param applicationId
+   * @param componentName
+   * @returns
+   */
+  async getComponentInfoByNames(applicationId: string, componentNames: string[]) {
+    return Service.file.info.find({
+      applicationId,
+      type: TYPE.COMPONENT,
+      name: { $in: componentNames },
+      deleted: false,
+    });
+  }
+
+  /**
+   * Set the reference component new live status log
+   * @param fileId
+   * @param options
+   */
+  async updateReferLiveVersion(contentId: string, fileId: string, options: { ctx: FoxCtx }): Promise<void> {
+    // Get referenced applications file id
+    const referenceFileList = await Service.file.list.find({
+      type: TYPE.COMPONENT,
+      deleted: false,
+      tags: { $elemMatch: { type: TAG.DELIVERY_REFERENCE, 'reference.id': fileId } },
+    });
+
+    (referenceFileList || []).forEach((file) => {
+      options.ctx.operations.push(
+        ...Service.log.addLogItem(
+          LOG.LIVE,
+          { id: contentId, contentId },
+          {
+            fileId: file.id,
+            category: { type: TYPE.APPLICATION, id: file.applicationId },
+            dataType: TYPE.COMPONENT,
+          },
+        ),
+      );
+    });
+  }
+
+  /**
+   * Get category components list
+   * @param params
+   * @returns
+   */
+  async getPageCategoryComponents(params: AppItemSearch): Promise<{ list: File[]; count: number }> {
+    const { page, size } = Service.file.info.setPageSize(params);
+    const searchParams: any = {
+      applicationId: params.applicationId,
+      deleted: false,
+      type: TYPE.COMPONENT,
+      'tags.type': TAG.COMPONENT_CATEGORY,
+    };
+
+    if (params.search) {
+      searchParams['$or'] = [
+        {
+          name: { $regex: new RegExp(params.search, 'i') },
+        },
+        {
+          'tags.type': TAG.COMPONENT_CATEGORY,
+          $or: [
+            {
+              'tags.name': { $regex: new RegExp(params.search, 'i') },
+            },
+            {
+              'tags.categoryName': { $regex: new RegExp(params.search, 'i') },
+            },
+            {
+              'tags.groupName': { $regex: new RegExp(params.search, 'i') },
+            },
+          ],
+        },
+      ];
+    }
+
+    const skip = (page - 1) * size;
+    const [list, count] = await Promise.all([
+      Model.file.find(searchParams, '', { sort: { createTime: 1 }, skip, limit: size }),
+      Model.file.getCountDocuments(searchParams),
+    ]);
+
+    return { list, count };
+  }
+
+  /**
+   * check component is deprecated or delete
+   * include the status of reference component
+   * @param componentItems
+   * @returns
+   */
+  async checkComponentStatus(
+    applicationId: string,
+    componentItems: { name: string }[],
+  ): Promise<{ deprecatedList: Record<string, string>[]; deletedList: Record<string, string>[] }> {
+    const componentNames = _.map(componentItems, 'name');
+    let componentFileList = await Service.file.list.find({
+      name: { $in: componentNames },
+      type: TYPE.COMPONENT,
+      applicationId,
+    });
+
+    // merge same component exist multi data with deleted status different
+    const componentFileObject: Record<string, File> = {};
+    componentFileList.forEach((component) => {
+      if (!componentFileObject[component.name] || componentFileObject[component.name].deleted) {
+        componentFileObject[component.name] = component;
+      }
+    });
+    componentFileList = _.toArray(componentFileObject);
+
+    let referenceIdMap: Record<string, string> = {};
+    let deprecatedObject: Record<string, boolean> = {};
+    componentFileList.forEach((component) => {
+      (component.tags || []).forEach((tag) => {
+        tag.type === TAG.DELIVERY_REFERENCE && (referenceIdMap[component.id] = tag.reference.id);
+        tag.type === TAG.DEPRECATED && (deprecatedObject[component.id] = tag.status);
+      });
+    });
+
+    // get reference component infos
+    let referenceList: File[] = [];
+    let referenceDeprecatedObject: Record<string, boolean> = {};
+    if (!_.isEmpty(referenceIdMap)) {
+      referenceList = await Service.file.list.getDetailByIds(_.values(referenceIdMap));
+      referenceList.forEach((reference) => {
+        const deprecatedTag = _.find(reference.tags || [], (tag) => tag.type === TAG.DEPRECATED);
+        deprecatedTag && (referenceDeprecatedObject[reference.id] = deprecatedTag.status);
+      });
+    }
+
+    let deprecatedList: Record<string, string>[] = [];
+    let deletedList: Record<string, string>[] = [];
+    const referenceObject = _.keyBy(referenceList, 'id');
+    componentFileList.forEach((component) => {
+      if (
+        component.deleted ||
+        (referenceIdMap[component.id] && referenceObject[referenceIdMap[component.id]].deleted)
+      ) {
+        deletedList.push({ id: component.id, name: component.name });
+      } else if (deprecatedObject[component.id] || referenceDeprecatedObject[referenceIdMap[component.id]]) {
+        deprecatedList.push({ id: component.id, name: component.name });
+      }
+    });
+
+    return { deprecatedList, deletedList };
   }
 }

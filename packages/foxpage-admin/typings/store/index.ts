@@ -1,82 +1,33 @@
-import { FileTypeEnum } from '@/constants/index';
-import { StoreBuyGoodsType } from '@/constants/store';
-import { OptionsAction, PaginationInfo, PaginationReqParams } from '@/types/index';
-import { Creator } from '@/types/user';
+import {
+  CommonFetchParams,
+  PaginationInfo,
+  PaginationReqParams,
+  ResponseBody,
+  StoreProjectResource,
+  StoreResourceDetail,
+} from '@foxpage/foxpage-client-types';
 
-import { ProjectContentType } from '../application/project';
-
-export interface StoreFileResource {
-  id: string;
-  name: string;
-  details: {
-    applicationId: string;
-    id: string;
-    projectId: string;
-  };
-  type: FileTypeEnum;
-  contents?: ProjectContentType[];
-}
-
-export interface StoreProjectResource {
-  id: string;
-  name: string;
-  intro: string;
-  creator: Creator;
-  createTime?: string;
-  updateTime?: string;
-  folderPath: string;
-  checked?: boolean;
-  files: Array<StoreFileResource>;
-  application: {
-    id: string;
-    name: string;
-  };
-}
-
-export interface StorePackageResource {
-  id: string;
-  name: string;
-  intro: string;
-  creator: Creator;
-  createTime?: string;
-  updateTime?: string;
-  checked?: boolean;
-  application: {
-    id: string;
-    name: string;
-  };
-  details: {
-    applicationId: string;
-    id: string;
-    projectId: string;
-    type: string;
-  };
-}
-
-export interface StoreResourceSearchParams extends PaginationReqParams {
+interface StoreCommonParams extends Pick<StoreResourceDetail, 'applicationId' | 'id' | 'type'> {
   appIds?: string[];
-  type: string;
+  goodsIds: string[];
 }
 
+export type StoreResourceSearchParams = Pick<StoreCommonParams, 'appIds' | 'type'> & PaginationReqParams;
 export interface StoreResourceSearchResult extends ResponseBody {
   pageInfo: PaginationInfo;
   data: StoreProjectResource[];
 }
-
-export interface GoodsAddParams {
-  appIds: string[];
-  goodsIds: string[];
-  delivery: StoreBuyGoodsType;
-}
-
-export interface GoodsCommitParams extends OptionsAction {
-  applicationId: string;
-  id: string;
+export interface GoodsSearchParams extends Omit<CommonFetchParams, 'organizationId'> {
   type: string;
-  intro?: string;
 }
 
-export interface GoodsOfflineParams extends OptionsAction {
-  applicationId: string;
-  id: string;
+export interface GoodsAddParams extends Pick<StoreCommonParams, 'appIds' | 'goodsIds'> {
+  delivery: 'clone' | 'reference';
 }
+
+export interface GoodsCommitParams extends Pick<StoreCommonParams, 'id' | 'applicationId' | 'type'> {
+  intro?: string;
+  isOnline?: string;
+}
+
+export type GoodsOfflineParams = Pick<StoreCommonParams, 'id' | 'applicationId'>;

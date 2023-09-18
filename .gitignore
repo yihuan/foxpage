@@ -6,6 +6,8 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
+.DS_Store
+
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
@@ -40,6 +42,9 @@ build/Release
 # Dependency directories
 node_modules/
 jspm_packages/
+
+# IDE/Editor data
+.idea
 
 # TypeScript v1 declaration files
 # typings/
@@ -114,11 +119,10 @@ lib/
 /lerna-log.json
 /yarn-error.json
 /yarn.lock
+/packages/foxpage-server/.env
 /packages/foxpage-server/nodemon.json
-/packages/foxpage-server/src/third-parties/login/trip-login.ts
 /packages/foxpage-server/static/swagger/swagger.json
 /packages/foxpage-server.npmrc
 /packages/foxpage-server/src/controllers/users/keys.ts
 /packages/foxpage-server/src/controllers/users/generate-keys.ts
 /.VSCodeCounter
-/packages/foxpage-plugin-aws-s3

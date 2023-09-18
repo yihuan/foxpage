@@ -2,10 +2,10 @@ import _ from 'lodash';
 
 import { Content, ContentStatus, ContentVersion, DSL, FileTypes } from '@foxpage/foxpage-server-types';
 
-import { LOG, TYPE, VERSION } from '../../../config/constant';
+import { DSL_VERSION, TYPE, VERSION } from '../../../config/constant';
 import * as Model from '../../models';
-import { AppTypeContent, PageContentRelationInfos, VersionPublish } from '../../types/content-types';
-import { FoxCtx } from '../../types/index-types';
+import { PageContentRelationInfos, VersionPublish } from '../../types/content-types';
+import { DBQuery, FoxCtx } from '../../types/index-types';
 import { BaseService } from '../base-service';
 import * as Service from '../index';
 
@@ -30,24 +30,21 @@ export class VersionLiveService extends BaseService<ContentVersion> {
    * @param  {AppTypeContent} params
    * @returns {ContentVersion[]} Promise
    */
-  async getContentLiveDetails(params: AppTypeContent): Promise<ContentVersion[]> {
+  async getContentLiveDetails(params: { contentIds: string[] }): Promise<ContentVersion[]> {
     const contentIds = params.contentIds || [];
     if (contentIds.length === 0) {
       return [];
     }
 
     // Get live details
-    const contentLiveInfo = await Service.content.list.getContentLiveInfoByIds(contentIds);
-    let contentVersionList: ContentVersion[] = [];
-    if (contentLiveInfo.length > 0) {
-      contentVersionList = await Service.version.list.getContentInfoByIdAndNumber(contentLiveInfo);
-    }
+    const contentLiveIdObject = await Service.content.list.getContentLiveIds(contentIds);
 
-    return contentVersionList;
+    return Service.version.list.getVersionListChunk(_.values(contentLiveIdObject));
   }
 
   /**
    * Set the release status of the version, which can only be set from the base version to other versions
+   * Only set status to release, not set current data to live
    * @param  {VersionPublish} params
    * @param  {boolean} liveRelation, Mark whether to publish and set the relation associated with the version of live
    * @returns Promise
@@ -60,23 +57,15 @@ export class VersionLiveService extends BaseService<ContentVersion> {
 
     // Check the status of the version
     const versionDetail = await this.getDetailById(params.id);
-    // TODO Need to judge that it is allowed to change from any state to discard
-    if (!versionDetail || versionDetail.status !== VERSION.STATUS_BASE) {
+    if (this.notValid(versionDetail) || versionDetail.status === VERSION.STATUS_RELEASE) {
       return { code: 1 }; // The current status does not allow re-publishing
     }
 
+    // Save relation information
+    const contentDetail = await Service.content.info.getDetailById(versionDetail.contentId);
+
     // Update version status
     options.ctx.transactions.push(Model.version.updateDetailQuery(params.id, { status: params.status }));
-
-    // Save relation information
-    const [contentDetail, invalidRelation] = await Promise.all([
-      Service.content.info.getDetailById(versionDetail.contentId),
-      Service.relation.checkRelationStatus(versionDetail?.content?.relation || {}),
-    ]);
-
-    if (!_.isEmpty(invalidRelation)) {
-      return { code: 2, data: invalidRelation };
-    }
 
     // Set the live status of relations
     if (liveRelation) {
@@ -86,6 +75,10 @@ export class VersionLiveService extends BaseService<ContentVersion> {
         false,
       );
       const relationIds = _.keys(relations);
+      const contentMock = Service.content.info.getContentExtension(contentDetail, ['mockId']);
+      if (!!contentMock.mockId) {
+        relationIds.push(contentMock.mockId);
+      }
 
       const relationsLatestVersion = await Service.version.list.getContentMaxVersionDetail(
         relationIds,
@@ -102,7 +95,7 @@ export class VersionLiveService extends BaseService<ContentVersion> {
         );
         // Set live status
         for (const relation of relationList) {
-          Service.content.live.setLiveContent(relation.contentId, relation.versionNumber, {
+          Service.content.live.setLiveContent(relation.contentId, relation.versionNumber, relation.id, {
             ctx: options.ctx,
             content: { id: relation.contentId } as Content,
           });
@@ -111,16 +104,12 @@ export class VersionLiveService extends BaseService<ContentVersion> {
     }
 
     // Add the relation information to the relation table
-    await Service.relation.saveRelations(
-      versionDetail.contentId,
-      versionDetail.versionNumber,
-      versionDetail?.content?.relation || {},
-      { ctx: options.ctx },
-    );
-
-    options.ctx.operations.push(
-      ...Service.log.addLogItem(LOG.PUBLISH, versionDetail, { fileId: contentDetail?.fileId }),
-    );
+    // await Service.relation.saveRelations(
+    //   versionDetail.contentId,
+    //   versionDetail.versionNumber,
+    //   versionDetail?.content?.relation || {},
+    //   { ctx: options.ctx },
+    // );
 
     return { code: 0, data: versionDetail };
   }
@@ -130,11 +119,20 @@ export class VersionLiveService extends BaseService<ContentVersion> {
    * @param  {string[]} versionIds
    * @returns void
    */
-  bulkSetVersionStatus(versionIds: string[], status: ContentStatus): any {
+  bulkSetVersionStatus(
+    versionIds: string[],
+    status: ContentStatus,
+    options?: { ctx: FoxCtx },
+  ): Partial<DBQuery> {
+    let query: Partial<DBQuery> = {};
     if (versionIds.length > 0) {
-      return Model.version.batchUpdateDetailQuery({ id: { $in: versionIds } }, { status } as any);
+      query = Model.version.batchUpdateDetailQuery({ id: { $in: versionIds } }, { status } as any);
+      if (options?.ctx) {
+        options.ctx.transactions.push(query);
+      }
     }
-    return {};
+
+    return query;
   }
   /**
    * Get the version details of the specified contentIds and the corresponding relation details
@@ -183,6 +181,8 @@ export class VersionLiveService extends BaseService<ContentVersion> {
       pageContentRelations.push({
         id: page.contentId,
         content: page.content as DSL,
+        version: page.version,
+        dslVersion: page.dslVersion || DSL_VERSION,
         relations,
         dependMissing,
         recursiveItem,

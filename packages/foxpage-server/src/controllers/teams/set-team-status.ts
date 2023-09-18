@@ -38,12 +38,12 @@ export class UpdateTeamDetail extends BaseController {
 
       // Get team details
       const sourceTeamDetail = await this.service.team.getDetailById(params.teamId);
-      if (!sourceTeamDetail || sourceTeamDetail.deleted) {
+      if (this.notValid(sourceTeamDetail)) {
         return Response.warning(i18n.team.invalidTeamId, 2020601);
       }
 
       // Permission check
-      const hasAuth = await this.service.auth.team(params.teamId, { ctx, mask: 8 });
+      const hasAuth = await this.service.auth.team(params.teamId, { ctx, mask: 1 });
       if (!hasAuth) {
         return Response.accessDeny(i18n.system.accessDeny, 4020601);
       }

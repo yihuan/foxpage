@@ -9,7 +9,10 @@ const contentSchema = new Schema<Content>(
     title: { type: String, required: true, minLength: 1, maxLength: 100 },
     tags: { type: Array, default: [] },
     fileId: { type: String, required: true, length: 20, ref: 'fp_application_file' },
+    applicationId: { type: String, required: true, length: 20, ref: 'fp_application' },
     liveVersionNumber: { type: Number, required: true, min: 0, default: 0 },
+    liveVersionId: { type: String, default: '' },
+    type: { type: String, default: '' },
     creator: { type: String, required: true, length: 20 },
     createTime: { type: Date, default: Date.now, required: true },
     updateTime: { type: Date, default: Date.now, required: true },
@@ -20,7 +23,7 @@ const contentSchema = new Schema<Content>(
   },
 );
 
-contentSchema.pre('save', function(next) {
+contentSchema.pre('save', function (next) {
   const currentTime = Date.now();
   this.updateTime = currentTime;
   if (!this.id) {
@@ -30,7 +33,10 @@ contentSchema.pre('save', function(next) {
 });
 
 contentSchema.index({ id: 1 });
+contentSchema.index({ applicationId: 1 });
 contentSchema.index({ fileId: 1 });
+contentSchema.index({ 'tags.locale': 1 });
+contentSchema.index({ type: 1 });
 contentSchema.index({ creator: 1 });
 contentSchema.index({ deleted: 1 });
 contentSchema.index({ createTime: -1 });

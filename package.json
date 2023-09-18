@@ -1,6 +1,6 @@
 {
   "name": "foxpage",
-  "version": "0.3.2",
+  "version": "0.6.0",
   "private": true,
   "bugs": {
     "url": "https://github.com/foxpage/foxpage/issues"
@@ -22,13 +22,14 @@
   "scripts": {
     "build": "lerna run build",
     "boot": "yarn && lerna bootstrap && yarn build",
-    "start-server:dev": "cd packages/foxpage-server && cross-env NODE_ENV=debug \"ts-node\" index.ts",
+    "start-server:dev": "cd packages/foxpage-server && cross-env NODE_ENV=debug ts-node index.ts",
     "start-server:prod": "npm run build-server:prod && cd packages/foxpage-server && cross-env NODE_ENV=development START_FROM=yarn node dist/index.js",
     "build-server:prod": "cd packages/foxpage-server && cross-env NODE_ENV=production npm run build:prod",
-    "init-server:prod": "cd packages/foxpage-server && cross-env NODE_ENV=production node dist/install.js",
+    "init-server:prod": "cd packages/foxpage-server && node dist/install.js",
     "test-server": "cd packages/foxpage-server && cross-env NODE_ENV=test npm run test",
+    "test": "npm run test-server",
     "build-admin:prod": "cd packages/foxpage-admin && npm install && npm run build",
-    "start-admin:prod": "cd packages/foxpage-admin && node server/app-express.js",
+    "start-admin:prod": "cd packages/foxpage-admin && node server/index.js",
     "release": "standard-version --commitAll",
     "commit": "git-cz",
     "lint": "eslint --cache --cache-location=.cache/eslint --ext .ts,.tsx --report-unused-disable-directives packages/",
@@ -60,6 +61,7 @@
     ]
   },
   "dependencies": {
+    "class-validator": "^0.13.2",
     "lerna": "^4.0.0",
     "lodash": "^4.17.21",
     "typescript": "^4.3.2"
@@ -80,28 +82,29 @@
     "@commitlint/cli": "^12.1.4",
     "@commitlint/config-conventional": "^12.1.4",
     "@types/node": "^15.12.2",
-    "@typescript-eslint/eslint-plugin": "^2.12.0",
-    "@typescript-eslint/parser": "^2.15.0",
+    "@typescript-eslint/eslint-plugin": "^5.37.0",
+    "@typescript-eslint/parser": "^5.37.0",
     "commitizen": "^4.2.4",
     "commitlint": "^12.1.4",
     "cross-env": "^7.0.3",
     "cz-conventional-changelog": "^3.3.0",
-    "eslint": "^6.8.0",
-    "eslint-config-prettier": "^6.9.0",
-    "eslint-plugin-import": "^2.25.2",
-    "eslint-plugin-prettier": "^3.1.2",
-    "eslint-plugin-simple-import-sort": "^7.0.0",
+    "eslint": "^8.23.1",
+    "eslint-config-prettier": "^8.5.0",
+    "eslint-plugin-import": "^2.26.0",
+    "eslint-plugin-prettier": "^4.2.1",
+    "eslint-plugin-simple-import-sort": "^8.0.0",
     "eslint-plugin-typescript": "^0.14.0",
     "git-cz": "^4.7.6",
     "husky": "^6.0.0",
     "import": "0.0.6",
     "lerna": "^4.0.0",
     "lint-staged": "^11.0.0",
-    "prettier": "^1.19.1",
+    "prettier": "^2.7.1",
     "standard-version": "^9.3.0",
     "ts-node": "^8.8.1"
   },
   "engines": {
+    "node": ">=14.15.1 <=16.x.x",
     "npm": ">=6.14.x"
   }
 }

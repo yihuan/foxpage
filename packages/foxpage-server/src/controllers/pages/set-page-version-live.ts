@@ -7,24 +7,26 @@ import { OpenAPI, ResponseSchema } from 'routing-controllers-openapi';
 import { Content } from '@foxpage/foxpage-server-types';
 
 import { i18n } from '../../../app.config';
-import { TYPE } from '../../../config/constant';
+import { LOG } from '../../../config/constant';
 import { FoxCtx, ResData } from '../../types/index-types';
 import { AppContentLiveReq, ContentDetailRes } from '../../types/validates/content-validate-types';
 import * as Response from '../../utils/response';
 import { BaseController } from '../base-controller';
 
-@JsonController('pages')
+@JsonController()
 export class SetPageLiveVersions extends BaseController {
   constructor() {
     super();
   }
 
   /**
-   * Set the live version of the page
+   * Set the live version of the page, template and block
    * @param  {AppContentStatusReq} params
    * @returns {Content}
    */
-  @Put('/live-versions')
+  @Put('pages/live-versions')
+  @Put('templates/live-versions')
+  @Put('blocks/live-versions')
   @OpenAPI({
     summary: i18n.sw.setPageContentLive,
     description: '',
@@ -34,15 +36,18 @@ export class SetPageLiveVersions extends BaseController {
   @ResponseSchema(ContentDetailRes)
   async index(@Ctx() ctx: FoxCtx, @Body() params: AppContentLiveReq): Promise<ResData<Content>> {
     try {
-      ctx.logAttr = Object.assign(ctx.logAttr, { type: TYPE.PAGE });
+      const apiType = this.getRoutePath(ctx.request.url);
 
-      const hasAuth = await this.service.auth.content(params.id, { ctx, mask: 8 });
+      ctx.logAttr = Object.assign(ctx.logAttr, { type: apiType });
+
+      const hasAuth = await this.service.auth.content(params.id, { ctx });
       if (!hasAuth) {
         return Response.accessDeny(i18n.system.accessDeny, 4051401);
       }
 
       const result: Record<string, number | string> = await this.service.content.live.setLiveVersion(params, {
         ctx,
+        actionType: [LOG.LIVE, apiType].join('_'),
       });
 
       if (result.code === 1) {
@@ -66,6 +71,8 @@ export class SetPageLiveVersions extends BaseController {
         } else if (contentResult.code === 4) {
           return Response.warning(i18n.content.RelationDependRecursive + ':' + contentResult.data, 2051406);
         }
+      } else if (result.code === 4) {
+        return Response.warning(i18n.content.invalidVersionContent, 2051407);
       }
 
       await this.service.content.live.runTransaction(ctx.transactions);

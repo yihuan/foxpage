@@ -82,11 +82,21 @@ export class LogDetail {
 }
 
 export class WorkspaceDynamicListReq {
+  @JSONSchema({ description: 'Organization Id' })
+  @IsString()
+  @Length(20, 20)
+  organizationId: string;
+
   @JSONSchema({ description: 'Application ID to which the project belongs' })
   @IsString()
   @Length(20, 20)
   @IsOptional()
   applicationId: string;
+
+  @JSONSchema({ description: 'Workspace type, user|application, default is user' })
+  @IsString()
+  @IsOptional()
+  type: string;
 
   @JSONSchema({ description: 'Filter fields, currently only filter by organization name' })
   @IsString()

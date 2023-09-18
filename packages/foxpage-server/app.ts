@@ -1,4 +1,10 @@
+/* eslint-disable import/first */
 'use strict';
+
+import dotenv from 'dotenv';
+
+dotenv.config();
+
 import { writeFile } from 'fs';
 import path from 'path';
 
@@ -10,10 +16,10 @@ import { koaSwagger } from 'koa2-swagger-ui';
 import { createKoaServer, getMetadataArgsStorage } from 'routing-controllers';
 import { routingControllersToSpec } from 'routing-controllers-openapi';
 
-import { loggerMiddleware, tokenMiddleware } from './src/middlewares';
+import { checkMiddleware, loggerMiddleware, tokenMiddleware } from './src/middlewares';
 import dbConnect from './src/utils/mongoose';
 
-const { defaultMetadataStorage } = require('class-transformer/cjs/storage');
+const { defaultMetadataStorage } = require('class-transformer/storage');
 
 export function startService(options: { createSwagger?: boolean }) {
   try {
@@ -31,7 +37,7 @@ export function startService(options: { createSwagger?: boolean }) {
       defaultErrorHandler: false,
       routePrefix: '/',
       controllers: [path.resolve(__dirname, './src/controllers/**/*.{js,ts}')],
-      middlewares: [loggerMiddleware, tokenMiddleware],
+      middlewares: [loggerMiddleware, tokenMiddleware, checkMiddleware],
       defaults: { paramOptions: { required: true } },
     };
 

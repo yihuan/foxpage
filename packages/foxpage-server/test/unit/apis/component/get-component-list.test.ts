@@ -19,17 +19,22 @@ let params = {
   applicationId: Data.app.id,
   type: ['component'],
   componentIds: [],
+  search: '',
+  loadOnIgnite: true,
 };
 
 beforeEach(() => {
   ctx.logAttr = { transactionId: '' };
   ctx.operations = [];
   ctx.transactions = [];
+  ctx.userLogs = [];
 
   params = {
     applicationId: Data.app.id,
     type: ['component'],
     componentIds: [],
+    search: '',
+    loadOnIgnite: true,
   };
 });
 
@@ -39,11 +44,13 @@ describe('Get: /components/live-versions', () => {
       .spyOn(ComponentContentService.prototype, 'getComponentVersionLiveDetails')
       .mockResolvedValue(<any>Data.content.nameVersionComponent);
     jest.spyOn(FileListService.prototype, 'getContentFileByIds').mockResolvedValue(<Record<string, File>>{
+      // eslint-disable-next-line camelcase
       cont_X3oHESmT7lQebHz: Object.assign(Data.file.list[0], { type: 'component' }),
     });
     jest.spyOn(ComponentService.prototype, 'getComponentDetailByIdVersion').mockResolvedValue(<
       Record<string, ContentVersion>
     >{
+      // eslint-disable-next-line camelcase
       cont_X3oHESmT7lQebHz: Object.assign(Data.version.list[0], { contentId: 'cont_X3oHESmT7lQebHz' }),
     });
     jest.spyOn(ResourceContentService.prototype, 'getResourceContentByIds').mockResolvedValue({});
@@ -61,11 +68,13 @@ describe('Get: /components/live-versions', () => {
       .spyOn(ComponentContentService.prototype, 'getComponentVersionLiveDetails')
       .mockResolvedValue(<any>Data.content.nameVersionComponent);
     jest.spyOn(FileListService.prototype, 'getContentFileByIds').mockResolvedValue(<Record<string, File>>{
+      // eslint-disable-next-line camelcase
       cont_X3oHESmT7lQebHz: Object.assign(Data.file.list[0], { type: 'component' }),
     });
     jest.spyOn(ComponentService.prototype, 'getComponentDetailByIdVersion').mockResolvedValue(<
       Record<string, ContentVersion>
     >{
+      // eslint-disable-next-line camelcase
       cont_X3oHESmT7lQebHz: Object.assign(Data.version.list[0], { contentId: 'cont_X3oHESmT7lQebHz' }),
     });
     jest.spyOn(ResourceContentService.prototype, 'getResourceContentByIds').mockResolvedValue({});

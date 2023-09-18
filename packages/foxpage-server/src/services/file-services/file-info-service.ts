@@ -41,7 +41,7 @@ export class FileInfoService extends BaseService<File> {
    * @param  {Partial<File>} params
    * @returns File
    */
-  create(params: Partial<File>, options: { ctx: FoxCtx }): File {
+  create(params: Partial<File>, options: { ctx: FoxCtx; actionDataType?: string }): File {
     const fileDetail: File = {
       id: params.id || generationId(PRE.FILE),
       applicationId: params.applicationId || '',
@@ -51,12 +51,19 @@ export class FileInfoService extends BaseService<File> {
       folderId: params.folderId || '',
       tags: params.tags || [],
       type: params.type as FileTypes,
+      subType: params.subType || '',
+      componentType: params.componentType || undefined,
       creator: params.creator || options.ctx.userInfo.id,
     };
 
     options.ctx.transactions.push(Model.file.addDetailQuery(fileDetail));
-    options.ctx.operations.push(
-      ...Service.log.addLogItem(LOG.CREATE, fileDetail, { dataType: fileDetail.type }),
+    Service.userLog.addLogItem(
+      { id: fileDetail.id },
+      {
+        ctx: options.ctx,
+        actions: [LOG.CREATE, options.actionDataType || params.type || '', TYPE.FILE],
+        category: { applicationId: params.applicationId, folderId: params.folderId, fileId: fileDetail.id },
+      },
     );
 
     return fileDetail;
@@ -69,8 +76,8 @@ export class FileInfoService extends BaseService<File> {
    */
   async addFileDetail(
     params: NewFileInfo,
-    options: { ctx: FoxCtx },
-  ): Promise<Record<string, number | (File & { contentId: string })>> {
+    options: { ctx: FoxCtx; actionDataType?: string },
+  ): Promise<Record<string, number | (File & { contentId: string }) | string[]>> {
     const newFileCheck = _.pick(params, ['applicationId', 'folderId', 'name', 'type', 'suffix']) as FileCheck;
     newFileCheck.deleted = false;
     const [appDetail, fileExist] = await Promise.all([
@@ -79,19 +86,19 @@ export class FileInfoService extends BaseService<File> {
     ]);
 
     // Check the validity of the application ID, check the existence of the file
-    if (!appDetail || appDetail.deleted || fileExist) {
+    if (this.notValid(appDetail) || fileExist) {
       return fileExist ? { code: 2 } : { code: 1 };
     }
 
     // Check if pathname is duplicate
     if (params.type === TYPE.PAGE) {
-      const pathnameExist = await Service.file.check.pathNameExist({
+      const existPathnames = await Service.file.check.pathNameExist({
         applicationId: params.applicationId,
         tags: params.tags || [],
         fileId: '',
       });
-      if (pathnameExist) {
-        return { code: 3 }; // pathname already exists
+      if (existPathnames.length > 0) {
+        return { code: 3, data: existPathnames }; // pathname already exists
       }
     }
 
@@ -103,20 +110,34 @@ export class FileInfoService extends BaseService<File> {
       intro: params.intro || '',
       folderId: params.folderId || '',
       type: params.type as FileTypes,
+      subType: params.subType || '',
+      componentType: params.componentType || '',
       tags: params.tags || [],
       suffix: params.suffix || '',
       creator: params.creator || options.ctx.userInfo.id,
     };
 
     options.ctx.transactions.push(Model.file.addDetailQuery(fileDetail));
-    options.ctx.operations.push(...Service.log.addLogItem(LOG.CREATE, fileDetail, { dataType: params.type }));
+    Service.userLog.addLogItem(
+      { id: fileDetail.id },
+      {
+        ctx: options.ctx,
+        actions: [LOG.CREATE, options.actionDataType || params.type || '', TYPE.FILE],
+        category: { applicationId: params.applicationId, folderId: params.folderId, fileId: fileDetail.id },
+      },
+    );
 
     const fileContentDetail = Object.assign({}, fileDetail, { contentId: '' });
     // Create content details
-    if ([TYPE.PAGE, TYPE.TEMPLATE].indexOf(params.type) === -1) {
+    if ([TYPE.PAGE, TYPE.TEMPLATE, TYPE.BLOCK].indexOf(params.type) === -1) {
       const contentDetail = Service.content.info.addContentDetail(
-        { title: params.name, fileId: fileDetail.id },
-        { ctx: options.ctx, type: params.type, content: params.content },
+        { title: params.name, fileId: fileDetail.id, type: params.type, applicationId: params.applicationId },
+        {
+          ctx: options.ctx,
+          type: params.type,
+          content: params.content,
+          actionDataType: options.actionDataType || params.type || '',
+        },
       );
 
       fileContentDetail.contentId = contentDetail.id;
@@ -132,10 +153,10 @@ export class FileInfoService extends BaseService<File> {
    */
   async updateFileDetail(
     params: AppTypeFileUpdate,
-    options: { ctx: FoxCtx },
-  ): Promise<Record<string, number>> {
+    options: { ctx: FoxCtx; actionDataType?: string; actionType?: string },
+  ): Promise<Record<string, number | string[]>> {
     const fileDetail = await this.getDetailById(params.id);
-    if (!fileDetail || fileDetail.deleted) {
+    if (this.notValid(fileDetail)) {
       return { code: 1 }; // Invalid file id
     }
 
@@ -155,38 +176,53 @@ export class FileInfoService extends BaseService<File> {
 
     // Check if pathname is duplicate
     if (fileDetail.type === TYPE.PAGE) {
-      const pathnameExist = await Service.file.check.pathNameExist({
+      const existPathnames = await Service.file.check.pathNameExist({
         applicationId: params.applicationId,
         tags: params.tags || [],
         fileId: params.id,
       });
-      if (pathnameExist) {
-        return { code: 3 }; // pathname already exists
+      if (existPathnames.length > 0) {
+        return { code: 3, data: existPathnames }; // pathname already exists
       }
 
       // Record file update log
       if (params.tags && params.tags !== fileDetail.tags) {
         options.ctx.operations.push(
-          ...Service.log.addLogItem(LOG.FILE_TAG, fileDetail, { fileId: fileDetail.id }),
+          ...Service.log.addLogItem(LOG.FILE_TAG, fileDetail, {
+            actionType: options.actionType || [LOG.FILE_TAG, TYPE.FILE].join('_'),
+            category: {
+              type: TYPE.FILE,
+              fileId: fileDetail.id,
+              folderId: fileDetail.folderId,
+              applicationId: fileDetail.applicationId,
+            },
+          }),
         );
       }
     }
 
     // Update file
     options.ctx.transactions.push(
-      Model.file.updateDetailQuery(params.id, _.pick(params, ['name', 'intro', 'type', 'tags'])),
+      Model.file.updateDetailQuery(
+        params.id,
+        _.pick(params, ['name', 'intro', 'type', 'tags', 'componentType']),
+      ),
     );
+    Service.userLog.addLogItem(fileDetail, {
+      ctx: options.ctx,
+      actions: [LOG.UPDATE, options.actionDataType || fileDetail.type || '', TYPE.FILE],
+      category: {
+        fileId: fileDetail.id,
+        folderId: fileDetail.folderId,
+        applicationId: fileDetail.applicationId,
+      },
+    });
 
     // Update content name
     if ([TYPE.VARIABLE, TYPE.CONDITION].indexOf(fileDetail.type) !== -1) {
       const contentList = await Service.content.file.getContentByFileIds([fileDetail.id]);
       contentList[0] && Service.content.info.updateDetailQuery(contentList[0].id, { title: params.name });
     }
-
-    // Save logs
-    options.ctx.operations.push(
-      ...Service.log.addLogItem(LOG.FILE_UPDATE, fileDetail, { dataType: fileDetail.type }),
-    );
 
     return { code: 0 };
   }
@@ -199,9 +235,6 @@ export class FileInfoService extends BaseService<File> {
    */
   updateFileItem(id: string, params: Partial<File>, options: { ctx: FoxCtx }): void {
     options.ctx.transactions.push(Model.file.updateDetailQuery(id, params));
-    options.ctx.operations.push(
-      ...Service.log.addLogItem(LOG.FILE_UPDATE, Object.assign({ id }, params), { fileId: params.id }),
-    );
   }
 
   /**
@@ -211,9 +244,12 @@ export class FileInfoService extends BaseService<File> {
    * @param  {TypeStatus} params
    * @returns Promise
    */
-  async setFileDeleteStatus(params: TypeStatus, options: { ctx: FoxCtx }): Promise<Record<string, number>> {
+  async setFileDeleteStatus(
+    params: TypeStatus,
+    options: { ctx: FoxCtx; actionType?: string },
+  ): Promise<Record<string, number>> {
     const fileDetail = await this.getDetailById(params.id);
-    if (!fileDetail) {
+    if (this.notValid(fileDetail)) {
       return { code: 1 }; // Invalid file information
     }
 
@@ -238,9 +274,13 @@ export class FileInfoService extends BaseService<File> {
 
     // Save logs
     options.ctx.operations.push(
-      ...Service.log.addLogItem(LOG.FILE_REMOVE, [fileDetail], { dataType: fileDetail.type }),
+      ...Service.log.addLogItem(LOG.FILE_REMOVE, [fileDetail], {
+        actionType: options.actionType || [LOG.DELETE, TYPE.FILE].join('_'),
+        category: { type: TYPE.FILE, fileId: params.id, applicationId: fileDetail.applicationId },
+      }),
       ...Service.log.addLogItem(LOG.CONTENT_REMOVE, contentVersion?.contentList || [], {
-        dataType: fileDetail.type,
+        actionType: options.actionType || [LOG.DELETE, TYPE.CONTENT].join('_'),
+        category: { type: TYPE.CONTENT, fileId: params.id, applicationId: fileDetail.applicationId },
       }),
     );
 
@@ -252,10 +292,18 @@ export class FileInfoService extends BaseService<File> {
    * @param  {File[]} fileList
    * @returns void
    */
-  batchSetFileDeleteStatus(fileList: File[], options: { ctx: FoxCtx; status?: boolean }): void {
-    const status = options.status === false ? false : true;
+  batchSetFileDeleteStatus(
+    fileList: File[],
+    options: { ctx: FoxCtx; status?: boolean; actionType?: string },
+  ): void {
+    const status = !(options.status === false);
     options.ctx.transactions.push(this.setDeleteStatus(_.map(fileList, 'id'), status));
-    options.ctx.operations.push(...Service.log.addLogItem(LOG.FILE_REMOVE, fileList || []));
+    options.ctx.operations.push(
+      ...Service.log.addLogItem(LOG.FILE_REMOVE, fileList || [], {
+        actionType: options.actionType || [LOG.DELETE, TYPE.FILE].join('_'),
+        category: { type: TYPE.FILE },
+      }),
+    );
   }
 
   /**
@@ -301,7 +349,7 @@ export class FileInfoService extends BaseService<File> {
       });
     }
 
-    if ((_.isEmpty(fileDetail) || fileDetail.deleted) && createNew) {
+    if (this.notValid(fileDetail) && createNew) {
       fileDetail = this.create(
         {
           applicationId: params.applicationId,
@@ -331,6 +379,8 @@ export class FileInfoService extends BaseService<File> {
       liveVersionNumber: 0,
       tags: [],
       fileId: params.id,
+      applicationId: params.applicationId,
+      type: params.type || '',
       creator: params.creator || '',
     };
 
@@ -412,7 +462,7 @@ export class FileInfoService extends BaseService<File> {
     let fileDetail: File | undefined;
     const fileList = await Service.file.list.find({
       applicationId: applicationId,
-      tags: { $elemMatch: { pathname: pathName } },
+      'tags.pathname': pathName,
       deleted: false,
     });
 
@@ -452,6 +502,7 @@ export class FileInfoService extends BaseService<File> {
       targetFileId?: string;
       relations?: Record<string, Record<string, string>>;
       setLive?: boolean;
+      addToSetting?: boolean; // add to app builder setting, default is false
     },
   ): Promise<Record<string, Record<string, string>>> {
     if (!options.relations) {
@@ -479,6 +530,7 @@ export class FileInfoService extends BaseService<File> {
     // Get the version details of all content
     const contentVersionList = await Service.version.live.getContentAndRelationVersion(
       _.map(contentList, 'id'),
+      true,
     );
 
     let relationsContentIds: string[] = [];
@@ -504,15 +556,18 @@ export class FileInfoService extends BaseService<File> {
     // Create a new file, and file associated data file
     for (const file of fileList) {
       if (!options.relations[file.id]) {
-        // Remove some tags in file tags
-        file.tags = this.removeTags(file.tags || [], [TAG.CLONE, TAG.COPY]);
         const newFileDetail = Service.file.info.create(
           {
             applicationId: targetApplicationId,
             name: options.type === CONT_STORE ? file.name : [file.name, randStr(4)].join('_'),
             intro: file.intro,
             suffix: file.suffix,
-            tags: file.tags?.concat({ [options.type === CONT_STORE ? TAG.COPY : TAG.CLONE]: file.id }),
+            tags: [
+              {
+                type: TAG.DELIVERY_CLONE,
+                clone: { id: file.id, applicationId: file.applicationId },
+              },
+            ],
             type: file.type,
             folderId: options.folderId || '',
           },
@@ -534,16 +589,72 @@ export class FileInfoService extends BaseService<File> {
     }
 
     // Create file content
+    let idMaps: Record<string, string> = {};
     for (const content of contentList) {
-      options.relations = Service.content.info.copyContent(content, contentDSLObject[content.id], {
-        ctx: options.ctx,
-        relations: options.relations,
-        tempRelations: {},
-        setLive: options.setLive || false,
-      });
+      const relationAndIdMaps = Service.content.info.copyContent(
+        content,
+        contentDSLObject[content.id] || {},
+        {
+          ctx: options.ctx,
+          relations: options.relations || {},
+          tempRelations: {},
+          setLive: options.setLive || false,
+          idMaps,
+        },
+      );
+      options.relations = relationAndIdMaps.relations;
+      idMaps = relationAndIdMaps.idMaps;
     }
 
-    return options.relations;
+    return options.relations || {};
+  }
+
+  /**
+   * add reference file
+   * check file exist, if not, create it
+   * @param sourceFileId
+   * @param sourceApplicationId
+   * @param options
+   * @returns
+   */
+  async referenceFile(
+    sourceFileId: string,
+    sourceApplicationId: string,
+    options: {
+      ctx: FoxCtx;
+      targetApplicationId: string;
+      targetFolderId: string;
+      fileName?: string;
+      type?: string;
+    },
+  ): Promise<File> {
+    // Check reference file has in folder or not
+    let fileDetail = await this.getDetail({
+      folderId: options.targetFolderId,
+      deleted: false,
+      tags: { $elemMatch: { $and: [{ type: TAG.DELIVERY_REFERENCE, 'reference.id': sourceFileId }] } },
+    });
+
+    // create reference file
+    if (this.notValid(fileDetail)) {
+      fileDetail = Service.file.info.create(
+        {
+          applicationId: options.targetApplicationId,
+          name: options.fileName,
+          type: options.type as FileTypes,
+          folderId: options.targetFolderId,
+          tags: [
+            {
+              type: TAG.DELIVERY_REFERENCE,
+              reference: { id: sourceFileId, applicationId: sourceApplicationId },
+            },
+          ],
+        },
+        { ctx: options.ctx },
+      );
+    }
+
+    return fileDetail;
   }
 
   /**
@@ -561,5 +672,22 @@ export class FileInfoService extends BaseService<File> {
     });
 
     return tagList;
+  }
+
+  /**
+   * filter reference file map
+   * @param fileList
+   * @returns
+   */
+  filterReferenceFile(fileList: File[]): Record<string, string> {
+    let referenceFileMap: Record<string, string> = {};
+    fileList.map((file) => {
+      const tag = Service.content.tag.getTagsByKeys(file.tags as any, ['reference']);
+      if (tag.reference?.id) {
+        referenceFileMap[tag.reference.id] = file.id;
+      }
+    });
+
+    return referenceFileMap;
   }
 }

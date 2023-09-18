@@ -7,7 +7,7 @@ import { OpenAPI, ResponseSchema } from 'routing-controllers-openapi';
 import { Content, ContentVersion } from '@foxpage/foxpage-server-types';
 
 import { i18n } from '../../../app.config';
-import { TYPE } from '../../../config/constant';
+import { LOG } from '../../../config/constant';
 import { VersionPublish } from '../../types/content-types';
 import { FoxCtx, ResData } from '../../types/index-types';
 import {
@@ -17,7 +17,7 @@ import {
 import * as Response from '../../utils/response';
 import { BaseController } from '../base-controller';
 
-@JsonController('pages')
+@JsonController()
 export class SetPageVersionPublishAndLiveStatus extends BaseController {
   constructor() {
     super();
@@ -32,7 +32,9 @@ export class SetPageVersionPublishAndLiveStatus extends BaseController {
    * @param  {AppContentStatusReq} params
    * @returns {Content}
    */
-  @Put('/publish')
+  @Put('pages/publish')
+  @Put('templates/publish')
+  @Put('blocks/publish')
   @OpenAPI({
     summary: i18n.sw.setPageVersionPublishLiveStatus,
     description: '',
@@ -42,33 +44,41 @@ export class SetPageVersionPublishAndLiveStatus extends BaseController {
   @ResponseSchema(ContentVersionDetailRes)
   async index(@Ctx() ctx: FoxCtx, @Body() params: VersionPublishStatusReq): Promise<ResData<ContentVersion>> {
     try {
-      ctx.logAttr = Object.assign(ctx.logAttr, { type: TYPE.PAGE });
+      const apiType = this.getRoutePath(ctx.request.url);
 
-      const hasAuth = await this.service.auth.version(params.id, { ctx, mask: 8 });
+      ctx.logAttr = Object.assign(ctx.logAttr, { type: apiType });
+
+      const hasAuth = await this.service.auth.version(params.id, { ctx });
       if (!hasAuth) {
         return Response.accessDeny(i18n.system.accessDeny, 4051301);
       }
 
       // Set publishing status
-      const result = await this.service.version.live.setVersionPublishStatus(params as VersionPublish, {
-        ctx,
-        liveRelation: true,
-      });
+      const [result, validateResult] = await Promise.all([
+        this.service.version.live.setVersionPublishStatus(params as VersionPublish, {
+          ctx,
+          liveRelation: true,
+        }),
+        this.service.version.check.versionCanPublish(params.id),
+      ]);
 
       if (result.code === 1) {
         return Response.warning(i18n.page.pageVersionHasPublished, 2051301);
-      } else if (result.code === 2) {
-        return Response.warning(
-          i18n.page.invalidRelations + ':' + Object.keys(result.data).join(','),
-          2051302,
-        );
+      } else if (!validateResult.publishStatus) {
+        return Response.warning(i18n.page.invalidVersionData, 2051302, validateResult);
       }
 
       if (result?.data) {
-        this.service.content.live.setLiveContent(result?.data?.contentId, result?.data?.versionNumber, {
-          ctx,
-          content: { id: result?.data?.contentId } as Content,
-        });
+        this.service.content.live.setLiveContent(
+          result?.data?.contentId,
+          result?.data?.versionNumber,
+          params.id,
+          {
+            ctx,
+            content: { id: result?.data?.contentId } as Content,
+            actionType: [LOG.LIVE, apiType].join('_'),
+          },
+        );
       }
 
       await this.service.version.live.runTransaction(ctx.transactions);

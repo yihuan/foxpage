@@ -1,13 +1,15 @@
+import './schema/';
+
 import _ from 'lodash';
 import mongoose from 'mongoose';
 
 import { DateTime } from '@foxpage/foxpage-shared';
 
-import { SearchModel } from '../types/index-types';
+import { DBQuery, SearchModel } from '../types/index-types';
 
 export class BaseModel<T> {
   protected model: mongoose.Model<T>;
-  protected ignoreFields: string = ' -_id -members._id -tags._id -resources._id';
+  protected ignoreFields: string = ' -_id -members._id -tags._id -host._id -resources._id -category._id';
 
   constructor(model: mongoose.Model<T>) {
     this.model = model;
@@ -56,7 +58,7 @@ export class BaseModel<T> {
 
     return this.model
       .find(search, this.ignoreFields, {
-        sort: { createTime: 1 },
+        sort: { _id: -1 },
         skip: from,
         limit: size,
       })
@@ -94,6 +96,7 @@ export class BaseModel<T> {
     options: mongoose.QueryOptions = {},
   ): Promise<T[]> {
     projection = projection || this.ignoreFields;
+    !options.sort && (options.sort = { _id: -1 });
     return this.model.find(filter, projection, options).lean();
   }
 
@@ -127,7 +130,7 @@ export class BaseModel<T> {
    * Query to generate new data
    * @param  {T} detail
    */
-  addDetailQuery(detail: T | T[]): any {
+  addDetailQuery(detail: T | T[]): DBQuery {
     return { type: 'insert', model: this.model, data: detail };
   }
 
@@ -146,7 +149,7 @@ export class BaseModel<T> {
    * @param  {string} id
    * @param  {Partial<T&CommonFields>} data
    */
-  updateDetailQuery(id: string, data: Partial<T>): any {
+  updateDetailQuery(id: string, data: Partial<T>): DBQuery {
     return {
       type: 'update',
       model: this.model,
@@ -171,7 +174,7 @@ export class BaseModel<T> {
    * @param  {Partial<T&CommonFields>} data
    * @returns void
    */
-  batchUpdateDetailQuery(filter: Record<string, any>, data: Partial<T>): any {
+  batchUpdateDetailQuery(filter: Record<string, any>, data: Partial<T>): DBQuery {
     return {
       type: 'update',
       model: this.model,
@@ -208,5 +211,15 @@ export class BaseModel<T> {
    */
   async aggregate(params: any = {}): Promise<any> {
     return this.model.aggregate(params);
+  }
+
+  /**
+   * get the distinct field values
+   * @param fieldId
+   * @param filter
+   * @returns
+   */
+  async distinct(fieldId: string, filter?: mongoose.FilterQuery<T>): Promise<any> {
+    return this.model.distinct(fieldId, filter);
   }
 }

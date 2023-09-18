@@ -13,7 +13,9 @@ import {
   Tag,
 } from '@foxpage/foxpage-server-types';
 
+import { AppFileType } from './file-types';
 import { Creator, Search } from './index-types';
+import { UserBase } from './user-types';
 
 export type SearchContentExist = Pick<Content, 'title' | 'fileId'>;
 export type ContentInfo = Exclude<Content, 'creator'> & {
@@ -21,6 +23,7 @@ export type ContentInfo = Exclude<Content, 'creator'> & {
   creator: Creator | string;
   isBase?: boolean;
   extendId?: string;
+  changed?: boolean;
 };
 export type ContentVersionInfo = Exclude<ContentVersion, 'creator'> & { creator: Creator };
 export type ContentVersionNumber = Pick<ContentVersion, 'contentId' | 'versionNumber'>;
@@ -36,10 +39,15 @@ export type RelationContentInfo = Record<string, File[] | DSL[]>;
 export type NewContentInfo = Pick<Content, 'title' | 'fileId' | 'tags' | 'creator'>;
 export type ContentVersionWithLive = ContentVersion & { isLiveVersion?: boolean };
 export type ContentCheck = Pick<Content, 'title' | 'fileId'>;
-export type ContentInfoUrl = ContentInfo & { urls: string[] };
+export type ContentInfoUrl = ContentInfo & { urls?: string[] };
 export type NameVersionContent = NameVersion & { content: DSL };
 export type NameVersionPackage = NameVersion & { package?: ComponentDSL };
 export type FolderFileContent = Folder | File | Content;
+
+export interface VersionNumber {
+  version: string;
+  versionNumber: number;
+}
 
 export interface SearchLatestVersion {
   contentId: string;
@@ -61,19 +69,20 @@ export interface NameVersion {
 export interface AppNameVersion {
   applicationId: string;
   contentNameVersion: NameVersion[];
-  type?: string;
+  type?: string | string[];
+  isCanary?: boolean;
 }
 
-export interface AppTypeContent {
-  applicationId: string;
-  type: FileTypes | FileTypes[];
+export interface AppTypeContent extends AppFileType {
   contentIds?: string[];
 }
 
 export interface TagContentData {
   id: string;
+  version: string;
   tags: Tag[];
   content: DSL;
+  dslVersion?: string;
 }
 
 export interface PageContentData {
@@ -84,8 +93,9 @@ export interface PageContentData {
 
 export interface AppTag {
   applicationId: string;
-  pathname: string;
   tags: Tag[];
+  pathname?: string;
+  fileId?: string;
 }
 
 export interface FileTagContent {
@@ -93,13 +103,10 @@ export interface FileTagContent {
   tags: Tag[];
 }
 
-export interface PageContentSearch {
+export interface PageContentSearch extends Search {
   applicationId: string;
   fileId: string;
   type: FileTypes;
-  page: number;
-  size: number;
-  search?: string;
 }
 
 export interface UpdateTypeContent {
@@ -115,6 +122,7 @@ export interface UpdateContentVersion {
   id: string;
   content: DSL | ComponentDSL;
   version: string;
+  contentUpdateTime?: string;
 }
 
 export interface RelationAssocContent {
@@ -143,10 +151,20 @@ export interface VersionPublish {
 export interface PageContentRelations {
   content: DSL;
   relations: Record<string, DSL[]>;
+  dslVersion?: string;
+  mock?: Record<string, any>;
+}
+
+export interface PageContentRelationsAndExternal {
+  content: VersionWithExternal;
+  relations: Record<string, DSL[]>;
+  mock?: Record<string, any>;
+  fileId?: string;
 }
 
 export interface PageContentRelationInfos extends PageContentRelations {
   id: string;
+  version?: string;
   dependMissing?: string[];
   recursiveItem?: string;
 }
@@ -188,10 +206,31 @@ export interface FileContentAndVersion {
   contentId: string;
   content: DSL;
   relations?: Record<string, ContentVersion[]>;
+  online?: boolean;
 }
 
 export interface VersionCheckResult {
   code: number;
-  data: DSL;
-  msg?: string;
+  data: any[];
+}
+
+export interface VersionWithExternal extends DSL {
+  name?: string;
+  version?: string;
+  fileId?: string;
+  mocks?: Record<string, DSL>;
+  extension?: Record<string, string>;
+}
+
+export interface LockContentDetail {
+  status: boolean;
+  operationTime: number;
+  operator: UserBase;
+}
+
+export interface RelationContentVersion {
+  id: string;
+  fileId: string;
+  content: Content;
+  version: ContentVersion;
 }

@@ -1,12 +1,12 @@
 import { combineReducers } from 'redux';
 
-import dynamics from './dynamics';
+import dynamics from './dynamics/list';
+import applications from './applications';
 import projects from './projects';
-import recycles from './recycles';
 
 const reducers = combineReducers({
+  applications,
   dynamics,
-  recycles,
   projects,
 });
 

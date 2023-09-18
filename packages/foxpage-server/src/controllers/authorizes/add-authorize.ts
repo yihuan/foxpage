@@ -7,7 +7,7 @@ import { OpenAPI, ResponseSchema } from 'routing-controllers-openapi';
 import { Authorize } from '@foxpage/foxpage-server-types';
 
 import { i18n } from '../../../app.config';
-import { PRE } from '../../../config/constant';
+import { PRE, TYPE } from '../../../config/constant';
 import { FoxCtx, ResData } from '../../types/index-types';
 import { AddAuthReq, AuthDetailRes } from '../../types/validates/authorize-validate-types';
 import * as Response from '../../utils/response';
@@ -35,6 +35,10 @@ export class AddAuthorizeDetail extends BaseController {
   @ResponseSchema(AuthDetailRes)
   async index(@Ctx() ctx: FoxCtx, @Body() params: AddAuthReq): Promise<ResData<string>> {
     try {
+      if (params.type !== TYPE.SYSTEM && !params.typeId) {
+        return Response.warning(i18n.auth.invalidTypeId, 2180101);
+      }
+
       // check current user has auth to set or not
       const hasAuth = await this.service.auth.checkTypeIdAuthorize(_.pick(params, ['type', 'typeId']), {
         ctx,
@@ -44,18 +48,23 @@ export class AddAuthorizeDetail extends BaseController {
       if (!hasAuth) {
         return Response.accessDeny(i18n.system.accessDeny, 4180101);
       }
+
       // check exist data
-      const existTargets = await this.service.auth.find({
-        type: params.type,
-        typeId: params.typeId,
-        targetId: { $in: params.targetIds },
-      });
+      const [existTargets, typeRelation] = await Promise.all([
+        this.service.auth.find({
+          type: params.type,
+          typeId: params.typeId,
+          targetId: { $in: params.targetIds },
+        }),
+        this.service.auth.getTargetRelation(params.type, [params.typeId]),
+      ]);
 
       const authTargetIds = _.map(existTargets, 'targetId');
+      const newTargetIds = _.pullAll(params.targetIds, authTargetIds);
 
-      let typeAuthList: Authorize[] = [];
-      for (const targetId of params.targetIds) {
-        if (authTargetIds.indexOf(targetId) === -1) {
+      if (newTargetIds.length > 0) {
+        let typeAuthList: Authorize[] = [];
+        for (const targetId of newTargetIds) {
           typeAuthList.push({
             id: generationId(PRE.AUTH),
             type: params.type,
@@ -63,19 +72,22 @@ export class AddAuthorizeDetail extends BaseController {
             targetId: targetId,
             mask: params.mask || 0,
             allow: !_.isNil(params.allow) ? params.allow : true,
+            relation: typeRelation[params.typeId] || {},
             creator: ctx.userInfo.id || '',
           });
         }
+        ctx.transactions.push(this.service.auth.addDetailQuery(typeAuthList));
       }
-
-      // Add new auth data
-      ctx.transactions.push(this.service.auth.addDetailQuery(typeAuthList));
 
       // Update exist auth data
       if (authTargetIds.length > 0) {
         ctx.transactions.push(
           this.service.auth.batchUpdateDetailQuery({ id: { $in: _.map(existTargets, 'id') } }, {
-            $set: { mask: params.mask || 0, allow: !_.isNil(params.allow) ? params.allow : true },
+            $set: {
+              mask: params.mask || 0,
+              allow: !_.isNil(params.allow) ? params.allow : true,
+              deleted: false,
+            },
           } as any),
         );
       }

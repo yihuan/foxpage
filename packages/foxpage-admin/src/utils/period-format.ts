@@ -1,8 +1,8 @@
-import moment from 'moment';
+import dayjs from 'dayjs';
 
-const periodFormat = (start: moment.MomentInput, end: moment.MomentInput, format = 'YYYY-MM-DD, HH:mm:ss') => {
-  let from = start === 'unknown' ? '' : moment(start).format(format);
-  let to = end === 'unknown' ? '' : moment(end).format(format);
+export const periodFormat = (start: string = 'unknown', end: string = 'unknown', format = 'YYYY-MM-DD, HH:mm:ss') => {
+  let from = start === 'unknown' ? '' : dayjs(start).format(format);
+  let to = end === 'unknown' ? '' : dayjs(end).format(format);
   if (!to) {
     // only format one time
     from = from === 'Invalid date' ? 'n/a' : from;
@@ -16,4 +16,4 @@ const periodFormat = (start: moment.MomentInput, end: moment.MomentInput, format
   return `${from} ~ ${to}`;
 };
 
-export default periodFormat;
+export default { periodFormat };

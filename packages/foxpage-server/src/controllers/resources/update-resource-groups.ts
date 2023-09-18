@@ -7,7 +7,7 @@ import { OpenAPI, ResponseSchema } from 'routing-controllers-openapi';
 import { Folder } from '@foxpage/foxpage-server-types';
 
 import { i18n } from '../../../app.config';
-import { TAG } from '../../../config/constant';
+import { LOG, TAG, TYPE } from '../../../config/constant';
 import { FoxCtx, ResData } from '../../types/index-types';
 import { ContentVersionDetailRes } from '../../types/validates/content-validate-types';
 import { UpdateResourceConfigReq } from '../../types/validates/resource-validate-types';
@@ -46,7 +46,7 @@ export class UpdateResourceGroup extends BaseController {
       }
 
       let groupDetail = await this.service.folder.info.getDetailById(params.id);
-      let tags = groupDetail.tags || [];
+      let tags = _.cloneDeep(groupDetail.tags || []);
 
       // Check id is a group id
       let isGroup = false;
@@ -63,11 +63,14 @@ export class UpdateResourceGroup extends BaseController {
       }
 
       // Check if group name has exist
+      const resourceTag = _.find(groupDetail.tags, 'resourceId') as Record<string, any>;
       const existGroup = await this.service.folder.list.find({
         parentFolderId: groupDetail.parentFolderId,
         id: { $ne: params.id },
         name: params.name,
         deleted: false,
+        'tags.type': TAG.RESOURCE_CONFIG,
+        'tags.resourceId': resourceTag.resourceId,
       });
 
       if (existGroup.length > 0) {
@@ -81,6 +84,11 @@ export class UpdateResourceGroup extends BaseController {
         folderPath: formatToPath(params.name),
         tags,
         intro: params.intro || groupDetail.intro,
+      });
+      this.service.userLog.addLogItem(groupDetail, {
+        ctx,
+        actions: [LOG.UPDATE, TYPE.RESOURCE, TYPE.FOLDER],
+        category: { folderId: params.id },
       });
 
       groupDetail = await this.service.folder.info.getDetailById(params.id);

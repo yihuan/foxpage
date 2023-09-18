@@ -13,7 +13,7 @@ import { AddContentReq, ContentBaseDetailRes } from '../../types/validates/conte
 import * as Response from '../../utils/response';
 import { BaseController } from '../base-controller';
 
-@JsonController('pages')
+@JsonController()
 export class AddPageContentDetail extends BaseController {
   constructor() {
     super();
@@ -25,7 +25,9 @@ export class AddPageContentDetail extends BaseController {
    * @param  {Header} headers
    * @returns {File}
    */
-  @Post('/contents')
+  @Post('pages/contents')
+  @Post('templates/contents')
+  @Post('blocks/contents')
   @OpenAPI({
     summary: i18n.sw.addPageContentDetail,
     description: '',
@@ -33,39 +35,66 @@ export class AddPageContentDetail extends BaseController {
     operationId: 'add-page-content-detail',
   })
   @ResponseSchema(ContentBaseDetailRes)
-  async index(@Ctx() ctx: FoxCtx, @Body() params: AddContentReq): Promise<ResData<Content>> {
+  async index(@Ctx() ctx: FoxCtx, @Body() params: AddContentReq): Promise<ResData<string>> {
     try {
+      const apiType = this.getRoutePath(ctx.request.url);
+
       // Check permission
       const hasAuth = await this.service.auth.file(params.fileId, { ctx });
       if (!hasAuth) {
         return Response.accessDeny(i18n.system.accessDeny, 4050101);
       }
 
-      // Check if the name already exists
-      const nameExist = await this.service.content.check.checkExist({
-        title: params.title,
-        fileId: params.fileId,
-        deleted: false,
+      !params.tags && (params.tags = []);
+      params.tags = this.service.content.tag.formatTags(TYPE.CONTENT, params.tags);
+      const locales: Record<string, string>[] = _.remove(params.tags, (tag) => {
+        return tag.locale;
       });
-      if (nameExist) {
-        return Response.warning(i18n.page.pageNameExist, 2050101);
+
+      // add special filed to tag
+      if (params.isBase) {
+        params.tags.push({ isBase: params.isBase });
+      }
+
+      if (params.extendId) {
+        params.tags.push({ extendId: params.extendId });
       }
 
       const contentParams: Partial<Content> = {
         title: params.title,
         fileId: params.fileId,
-        tags: params.tags || [],
+        applicationId: params.applicationId,
+        type: apiType,
+        tags: params.tags,
       };
-      const contentDetail = this.service.content.info.addContentDetail(contentParams, {
-        ctx,
-        type: TYPE.PAGE as FileTypes,
-      });
+
+      if (params.oneLocale && locales.length > 0) {
+        locales.forEach((locale) => {
+          const localeContentParams = _.cloneDeep(contentParams);
+          localeContentParams.tags?.push(locale);
+          localeContentParams.title += '_' + (locale.locale || '');
+          this.service.content.info.addContentDetail(localeContentParams, {
+            ctx,
+            content: { relation: params.content?.relation || {}, schemas: params.content?.schemas || [] },
+            type: apiType as FileTypes,
+            actionDataType: apiType,
+          });
+        });
+      } else {
+        contentParams.tags?.push(...locales);
+        this.service.content.info.addContentDetail(contentParams, {
+          ctx,
+          content: { relation: params.content?.relation || {}, schemas: params.content?.schemas || [] },
+          type: apiType as FileTypes,
+          actionDataType: apiType,
+        });
+      }
 
       await this.service.content.info.runTransaction(ctx.transactions);
 
-      ctx.logAttr = Object.assign(ctx.logAttr, { id: contentDetail.id, type: TYPE.PAGE });
+      ctx.logAttr = Object.assign(ctx.logAttr, { type: apiType });
 
-      return Response.success(contentDetail, 1050101);
+      return Response.success(i18n.page.addNewPageContentSuccess, 1050101);
     } catch (err) {
       return Response.error(err, i18n.page.addNewPageContentFailed, 3050101);
     }

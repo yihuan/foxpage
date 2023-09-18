@@ -1,3 +1,4 @@
+import _ from 'lodash';
 import { FoxCtx } from 'src/types/index-types';
 
 import { Authorize } from '@foxpage/foxpage-server-types';
@@ -19,9 +20,21 @@ export class AuthService extends BaseService<Authorize> {
    * Single instance
    * @returns AuthService
    */
-  public static getInstance(): AuthService {
+  public static getInstance (): AuthService {
     this._instance || (this._instance = new AuthService());
     return this._instance;
+  }
+
+  /**
+   * Check whether the specified user has system auth
+   * @param  {string} user
+   * @returns Promise
+   */
+   async system (options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
+    return this.getTargetTypeAuth(
+        { type: TYPE.SYSTEM, typeId: '', targetId: options.ctx.userInfo.id },
+        options.mask,
+      );
   }
 
   /**
@@ -30,16 +43,17 @@ export class AuthService extends BaseService<Authorize> {
    * @param  {string} user
    * @returns Promise
    */
-  async application(applicationId: string, options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
-    const [appDetail, hasAuth] = await Promise.all([
+  async application (applicationId: string, options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
+    const [appDetail, systemAuth, hasAuth] = await Promise.all([
       Service.application.getDetailById(applicationId),
+      this.system(options),
       this.getTargetTypeAuth(
         { type: TYPE.APPLICATION, typeId: applicationId, targetId: options.ctx.userInfo.id },
         options.mask,
       ),
     ]);
 
-    if (appDetail?.creator === options.ctx.userInfo?.id || hasAuth) {
+    if (appDetail?.creator === options.ctx.userInfo?.id || systemAuth || hasAuth) {
       return true;
     }
 
@@ -52,16 +66,17 @@ export class AuthService extends BaseService<Authorize> {
    * @param  {string} user
    * @returns Promise
    */
-  async organization(organizationId: string, options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
-    const [orgDetail, hasAuth] = await Promise.all([
+  async organization (organizationId: string, options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
+    const [orgDetail, systemAuth, hasAuth] = await Promise.all([
       Service.org.getDetailById(organizationId),
+      this.system(options),
       this.getTargetTypeAuth(
         { type: TYPE.ORGANIZATION, typeId: organizationId, targetId: options.ctx.userInfo.id },
         options.mask,
       ),
     ]);
 
-    return orgDetail?.creator === options.ctx.userInfo?.id || hasAuth;
+    return orgDetail?.creator === options.ctx.userInfo?.id || systemAuth || hasAuth;
   }
 
   /**
@@ -70,7 +85,7 @@ export class AuthService extends BaseService<Authorize> {
    * @param  {string} user
    * @returns Promise
    */
-  async team(teamId: string, options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
+  async team (teamId: string, options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
     const [teamDetail, hasAuth] = await Promise.all([
       Service.team.getDetailById(teamId),
       this.getTargetTypeAuth(
@@ -90,7 +105,7 @@ export class AuthService extends BaseService<Authorize> {
    * @param  {string} user
    * @returns Promise
    */
-  async folder(folderId: string, options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
+  async folder (folderId: string, options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
     const user = options.ctx.userInfo.id;
 
     const [folderDetail, hasAppAuth, hasAuth] = await Promise.all([
@@ -113,7 +128,7 @@ export class AuthService extends BaseService<Authorize> {
    * @param  {string} user
    * @returns Promise
    */
-  async file(fileId: string, options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
+  async file (fileId: string, options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
     const user = options.ctx.userInfo.id;
     !options?.mask && options.mask === 2;
 
@@ -141,7 +156,7 @@ export class AuthService extends BaseService<Authorize> {
    * @param  {string} user
    * @returns Promise
    */
-  async content(contentId: string, options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
+  async content (contentId: string, options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
     const user = options.ctx.userInfo.id;
 
     const [contentDetail, hasAppAuth, hasAuth] = await Promise.all([
@@ -168,7 +183,7 @@ export class AuthService extends BaseService<Authorize> {
    * @param  {string} user
    * @returns Promise
    */
-  async version(versionId: string, options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
+  async version (versionId: string, options: { ctx: FoxCtx; mask?: number }): Promise<boolean> {
     const user = options.ctx.userInfo.id;
 
     const [versionDetail, hasAppAuth, hasAuth] = await Promise.all([
@@ -194,7 +209,7 @@ export class AuthService extends BaseService<Authorize> {
    * @param mask
    * @returns
    */
-  async getTargetTypeAuth(
+  async getTargetTypeAuth (
     params: { type: string; typeId: string; targetId: string },
     mask: number = 2,
   ): Promise<boolean> {
@@ -212,13 +227,66 @@ export class AuthService extends BaseService<Authorize> {
    * @returns {Promise<boolean>}
    * @memberof AuthService
    */
-  async checkTypeIdAuthorize(
+  async checkTypeIdAuthorize (
     params: { type: string; typeId: string },
     options: { ctx: FoxCtx; mask?: number },
   ): Promise<boolean> {
-    if (params.type === TYPE.APPLICATION) {
+    if (params.type === TYPE.SYSTEM) {
+      return this.system(options);
+    } else if (params.type === TYPE.APPLICATION) {
       return this.application(params.typeId, options);
+    } else if (params.type === TYPE.FOLDER) {
+      return this.folder(params.typeId, options);
+    } else if (params.type === TYPE.FILE) {
+      return this.file(params.typeId, options);
+    } else if (params.type === TYPE.CONTENT) {
+      return this.content(params.typeId, options);
+    } else if (params.type === TYPE.VERSION) {
+      return this.version(params.typeId, options);
     }
+
     return false;
+  }
+
+  /**
+   * Get auth target relation ids
+   * @param type 
+   * @param targetIds 
+   * @returns 
+   */
+  async getTargetRelation(type: string, targetIds:string[]): Promise<Record<string, any>> {
+    let targetRelation: Record<string, any> = {};
+    if (type === TYPE.CONTENT) {
+      const contentList = await Service.content.list.getDetailByIds(targetIds);
+      const fileTargetRelation = await this.getTargetRelation(TYPE.FILE, _.map(contentList, 'fileId'));
+      contentList.map(content => {
+        targetRelation[content.id] = Object.assign(
+          { contentId: content.id }, 
+          fileTargetRelation[content.fileId] ||{}
+        );
+      });
+    } else if (type === TYPE.FILE) {
+      const fileList = await Service.file.list.getDetailByIds(targetIds);
+      const folderTargetRelation = await this.getTargetRelation(TYPE.FOLDER, _.map(fileList, 'folderId'));
+      fileList.map(file => { 
+        targetRelation[file.id] = Object.assign(
+          { fileId: file.id }, 
+          folderTargetRelation[file.folderId] || {}
+        );
+      });
+    } else if (type === TYPE.FOLDER) {
+      const folderList = await Service.folder.list.getDetailByIds(targetIds);
+      folderList.map(folder => {
+        targetRelation[folder.id] = {};
+        (folder.tags || []).forEach(tag => {
+          if (tag.type === TYPE.PROJECT_FOLDER) {
+            targetRelation[folder.id].projectId = folder.id;
+            targetRelation[folder.id].applicationId = folder.applicationId;
+          }
+        });
+      });
+    }
+
+    return targetRelation;
   }
 }

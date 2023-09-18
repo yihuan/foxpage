@@ -43,11 +43,11 @@ export class VersionCheckService extends BaseService<ContentVersion> {
       [TYPE.PAGE, TYPE.TEMPLATE, TYPE.VARIABLE, TYPE.CONDITION, TYPE.FUNCTION].indexOf(fileDetail.type) !== -1
     ) {
       for (const field of ['schemas', 'relation']) {
-        !content[field] && missingFields.push(field);
+        !content?.[field] && missingFields.push(field);
       }
     } else if ([TYPE.COMPONENT, TYPE.LIBRARY].indexOf(fileDetail.type) !== -1) {
       for (const field of ['resource', 'meta', 'schema']) {
-        !content[field] && missingFields.push(field);
+        !content?.[field] && missingFields.push(field);
       }
     }
 
@@ -132,9 +132,9 @@ export class VersionCheckService extends BaseService<ContentVersion> {
    * @param  {VersionCheckResult} versionDSL
    * @returns versionDSL
    */
-  structure(versionDSL: DSL): VersionCheckResult {
+  structure(versionDSL: DSL, options?: { notCheckName: boolean }): VersionCheckResult {
     if (!versionDSL.id || !_.startsWith(versionDSL.id, PRE.CONTENT)) {
-      return { code: 1, data: versionDSL, msg: versionDSL.id || '' };
+      return { code: 1, data: [versionDSL.id] };
     }
 
     if (!versionDSL.relation) {
@@ -142,16 +142,19 @@ export class VersionCheckService extends BaseService<ContentVersion> {
     } else if (!_.isEmpty(versionDSL.relation)) {
       const invalidKeys: string[] = this.relation(versionDSL.relation);
       if (invalidKeys.length > 0) {
-        return { code: 2, data: versionDSL, msg: invalidKeys.join(',') };
+        return { code: 2, data: invalidKeys };
       }
     }
 
-    const checkResult = this.schemaCheckRecursive(versionDSL.schemas);
-    if ((checkResult.options?.invalidNames || []).length > 0) {
-      return { code: 3, data: versionDSL, msg: checkResult.options.invalidNames.join(',') };
+    const notCheckName = options?.notCheckName || false;
+    if (!notCheckName) {
+      const checkResult = this.schemaCheckRecursive(versionDSL?.schemas || []);
+      if ((checkResult?.invalidNames || []).length > 0) {
+        return { code: 3, data: checkResult.invalidNames };
+      }
     }
 
-    return { code: 0, data: versionDSL };
+    return { code: 0, data: [] };
   }
 
   /**
@@ -159,24 +162,19 @@ export class VersionCheckService extends BaseService<ContentVersion> {
    * key do not has `.`
    * id is start with `cont_`
    * type must exist
-   * @param  {Record<string} relation
-   * @param  {} DslRelation>
+   * @param  {Record<string, DslRelation>} relation
    * @returns string
    */
   relation(relation: Record<string, DslRelation>): string[] {
     let invalidKeys: string[] = [];
     for (const key in relation) {
       // do not check system variable, conditions ..
-      if (relation[key].type && _.startsWith(relation[key].type, 'sys_')) {
+      const ignoreCheck = Service.relation.ignoreCheckRelation(key, relation[key]);
+      if (ignoreCheck) {
         continue;
       }
 
-      if (
-        key.indexOf('.') !== -1 ||
-        !relation[key].type ||
-        !relation[key].id ||
-        !_.startsWith(relation[key].id, PRE.CONTENT)
-      ) {
+      if (!relation[key].type || !relation[key].id || !_.startsWith(relation[key].id, PRE.CONTENT)) {
         invalidKeys.push(key);
       }
     }
@@ -188,28 +186,153 @@ export class VersionCheckService extends BaseService<ContentVersion> {
    * 1, the structure in schemas must has `props` field, if it does not exist, the default is empty object
    * 2, the structure in schemas must has `id`, `name` fields
    * 3, parentId in structure can be removed
+   * 4, the component is invalid when deprecated or deleted
+   *
+   * invalidRelationNames is the relation data in schema that not found in content.relation object
    * @param  {DslSchemas[]} schemas
    * @param  {{invalidNames:string[]}={invalidNames:[]}} options
    * @returns string
    */
   schemaCheckRecursive(
-    schemas: DslSchemas[],
-    options: { invalidNames: string[] } = { invalidNames: [] },
-  ): { schemas: DslSchemas[]; options: { invalidNames: string[] } } {
-    for (const structure of schemas) {
-      // TODO await portal processing
-      // delete structure.parentId;
+    schemas: DslSchemas[] = [],
+    options?: { invalidRelationNames: string[] },
+  ): {
+    invalidNames: Record<string, string>[];
+    invalidRelationNameData: Record<string, string>[];
+  } {
+    let invalidNames: Record<string, string>[] = [];
+    let invalidRelationNameData: Record<string, string>[] = [];
+    let invalidRelationNames = options?.invalidRelationNames || [];
 
+    for (const structure of schemas) {
       !structure.id && (structure.id = generationId(PRE.STRUCTURE));
       !structure.props && (structure.props = {});
-      // TODO schema root node is virtual structure, does not has label and name field
-      structure.label && !structure.name && options.invalidNames.push(structure.label);
+      structure.label && !structure.name && invalidNames.push({ id: structure.id, label: structure.label });
+
+      // get the structure id of invalid schema relation
+      if (invalidRelationNames.length > 0) {
+        const schemaItemString = JSON.stringify(_.omit(structure, ['children']));
+        const relationMatches: string[] = schemaItemString.match(/(?<=\{\{)(.+?)(?=\}\})/g) || [];
+        const intersectionNames = _.intersection(relationMatches, invalidRelationNames);
+        if (intersectionNames.length > 0) {
+          intersectionNames.map((item) => {
+            invalidRelationNameData.push({ id: structure.id, name: item });
+          });
+          _.pullAll(invalidRelationNames, intersectionNames);
+        }
+      }
 
       if (structure.children && structure.children.length > 0) {
-        this.schemaCheckRecursive(structure.children, options);
+        const childResult = this.schemaCheckRecursive(structure.children, { invalidRelationNames });
+        invalidNames = invalidNames.concat(childResult.invalidNames);
+        invalidRelationNameData = invalidRelationNameData.concat(childResult.invalidRelationNameData);
       }
     }
 
-    return { schemas, options };
+    return { invalidNames, invalidRelationNameData };
+  }
+
+  /**
+   * check relation data in schemas list, and mapping with relation data in content
+   * response the relation in schemas not mapping in relation in content
+   * @param content
+   * @returns
+   */
+  schemaRelationMapping(content: DSL): string[] {
+    let invalidSchemaRelation: string[] = [];
+    const schemasString = JSON.stringify(content.schemas || []);
+    const relationMatches: string[] = schemasString.match(/(?<=\{\{)(.+?)(?=\}\})/g) || [];
+
+    for (const schemaRelation of _.uniq(relationMatches)) {
+      if (_.startsWith(schemaRelation, '$this:') || _.startsWith(schemaRelation, '__context:')) {
+        continue;
+      }
+
+      if (!content.relation[schemaRelation]) {
+        invalidSchemaRelation.push(schemaRelation);
+      }
+    }
+
+    return invalidSchemaRelation;
+  }
+
+  /**
+   * check content version can be publish
+   * 1, schema structure
+   * 2, content relation data
+   * 3, structure relation mapping
+   * 4, content extend id, version id, content id
+   * @param versionId
+   * @returns
+   */
+  async versionCanPublish(versionId: string): Promise<Record<string, any>> {
+    let responseObject: Record<string, any> = {
+      publishStatus: true,
+      versionId: '',
+      contentId: '',
+      extendId: '',
+      structure: [],
+      relation: {},
+    };
+
+    const versionDetail = await Service.version.info.getDetailById(versionId);
+    if (this.notValid(versionDetail)) {
+      responseObject.versionId = versionId;
+      return responseObject;
+    }
+
+    const contentDetail = await Service.content.info.getDetailById(versionDetail.contentId);
+    if (this.notValid(contentDetail)) {
+      responseObject.contentId = versionDetail.contentId;
+      return responseObject;
+    }
+
+    const extension = Service.content.tag.getTagsByKeys(contentDetail?.tags || [], ['extendId']);
+    const componentItems = Service.content.component.getComponentInfoRecursive(
+      versionDetail.content.schemas || [],
+    );
+    const schemaMapResult = this.schemaRelationMapping(versionDetail.content);
+    const { invalidNames, invalidRelationNameData } = this.schemaCheckRecursive(
+      versionDetail.content.schemas,
+      {
+        invalidRelationNames: schemaMapResult,
+      },
+    );
+
+    const [invalidComponents, relationResult, extendDetail] = await Promise.all([
+      Service.component.checkComponentStatus(contentDetail.applicationId, componentItems),
+      Service.relation.checkRelationStatus(versionDetail.content.relation),
+      Service.content.info.getDetailById(extension.extendId),
+    ]);
+
+    responseObject.extendId = extension.extendId && this.notValid(extendDetail) ? extension.extendId : '';
+    responseObject.relation = relationResult;
+    if (invalidNames.length > 0) {
+      responseObject.structure.push({ status: 3, data: invalidNames });
+    }
+
+    if (invalidRelationNameData.length > 0) {
+      responseObject.structure.push({ status: 4, data: invalidRelationNameData });
+    }
+
+    if (invalidComponents.deletedList.length > 0) {
+      responseObject.structure.push({ status: 5, data: invalidComponents.deletedList });
+    }
+
+    if (invalidComponents.deprecatedList.length > 0) {
+      responseObject.structure.push({ status: 6, data: invalidComponents.deprecatedList });
+    }
+
+    if (
+      responseObject.versionId ||
+      responseObject.contentId ||
+      responseObject.extendId ||
+      !_.isEmpty(responseObject.relation) ||
+      responseObject.structure.length > 0
+    ) {
+      responseObject.publishStatus = false;
+    }
+
+    return responseObject;
   }
 }

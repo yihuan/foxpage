@@ -2,6 +2,7 @@ import _ from 'lodash';
 
 import { AppFolderTypes, Content, ContentVersion, File, Folder } from '@foxpage/foxpage-server-types';
 
+import { TYPE } from '../../../config/constant';
 import * as Model from '../../models';
 import {
   FileContentInfo,
@@ -14,6 +15,7 @@ import {
   FolderInfo,
   FolderPageSearch,
   FolderUserInfo,
+  UserFileFolderSearch,
   WorkspaceFolderSearch,
 } from '../../types/file-types';
 import { PageData } from '../../types/index-types';
@@ -218,12 +220,12 @@ export class FolderListService extends BaseService<Folder> {
    */
   async getFolderChildrenList(params: FolderChildrenSearch): Promise<PageData<FolderInfo>> {
     let folderPageInfo: PageData<FolderInfo> = { list: [], count: 0 };
-    if (!params.parentFolderIds || params.parentFolderIds.length === 0) {
-      return folderPageInfo;
-    }
 
-    const searchParams: FolderChildrenSearch = {
-      parentFolderIds: params.parentFolderIds || [],
+    const searchParams: Record<string, any> = {
+      types: params.types || [TYPE.PROJECT_FOLDER],
+      userIds: params.userIds || [],
+      applicationIds: params.applicationIds || [],
+      organizationId: params.organizationId || '',
       page: params.page || 1,
       size: params.size || 10,
       search: params.search || '',
@@ -342,6 +344,12 @@ export class FolderListService extends BaseService<Folder> {
    * @returns Promise
    */
   async getWorkspaceFolderList(params: WorkspaceFolderSearch): Promise<PageData<FolderInfo>> {
+    const appList = await Service.application.find({
+      organizationId: params.organizationId,
+      deleted: false,
+    });
+    params.applicationIds = _.map(appList, 'id');
+
     const [folderList, folderCount] = await Promise.all([
       Model.folder.getWorkspaceFolderList(params),
       Model.folder.getWorkspaceFolderCount(params),
@@ -376,5 +384,218 @@ export class FolderListService extends BaseService<Folder> {
    */
   async folderAggregate(aggregate: any[]): Promise<any> {
     return this.model.aggregate(aggregate);
+  }
+
+  /**
+   * Get user involve project
+   * @param params
+   * @returns
+   */
+  async getInvolveProject(params: any): Promise<any> {
+    const { userId = '', applicationIds = [] } = params;
+    const pageSize = this.setPageSize(params);
+    const aggregateObject: any[] = [
+      {
+        $lookup: {
+          from: 'fp_application_folder',
+          localField: 'relation.projectId',
+          foreignField: 'id',
+          as: 'project',
+        },
+      },
+      {
+        $match: {
+          targetId: userId,
+          allow: true,
+          deleted: false,
+          'relation.projectId': { $exists: true },
+          'project.deleted': false,
+          'project.tags.type': TYPE.PROJECT_FOLDER,
+        },
+      },
+      { $project: { 'relation.projectId': 1 } },
+    ];
+
+    if (params.search) {
+      aggregateObject[1]['$match']['$or'] = [
+        { 'project.name': { $regex: new RegExp(params.search || '', 'i') } },
+        { 'project.id': params.search },
+      ];
+    }
+
+    if (params.applicationIds && params.applicationIds.length > 0) {
+      aggregateObject[1]['$match']['relation.applicationId'] = { $in: applicationIds };
+    }
+
+    const involveProjects: Folder[] = await Model.auth.aggregate(aggregateObject);
+
+    const projectIds = _.uniq(_.map(involveProjects, 'relation.projectId'));
+    const pageProjectIds = _.chunk(projectIds, pageSize.size)[pageSize.page - 1] || [];
+    const involveProjectList: FolderInfo[] = [];
+
+    if (pageProjectIds.length > 0) {
+      // Get project detail
+      const projectList = await Service.folder.list.getDetailByIds(pageProjectIds);
+      const [userObject, appList] = await Promise.all([
+        Service.user.getUserBaseObjectByIds(_.map(projectList, 'creator')),
+        Service.application.getDetailByIds(_.map(projectList, 'applicationId')),
+      ]);
+
+      const appObject = _.keyBy(appList, 'id');
+      projectList.forEach((project) => {
+        involveProjectList.push(
+          Object.assign(
+            _.omit(project, ['creator', 'applicationId']),
+            { creator: userObject[project.creator] },
+            { application: _.pick(appObject[project.applicationId], ['id', 'name']) },
+          ) as FolderInfo,
+        );
+      });
+    }
+
+    return { list: involveProjectList, count: projectIds.length || 0 };
+  }
+
+  /**
+   * Get user involve file's project list
+   * @param params
+   * @returns
+   */
+  async getInvolveFileProject(params: any): Promise<any> {
+    const { userId = '', applicationIds = [] } = params;
+    const aggregateObject: any[] = [
+      {
+        $lookup: {
+          from: 'fp_application_file',
+          localField: 'relation.fileId',
+          foreignField: 'id',
+          as: 'file',
+        },
+      },
+      {
+        $match: {
+          targetId: userId,
+          allow: true,
+          deleted: false,
+          'relation.projectId': { $exists: true },
+          'file.deleted': false,
+        },
+      },
+      { $sort: { 'file.createTime': -1 } },
+      { $group: { _id: '$file.folderId' } },
+      { $project: { 'file.folderId': 1 } },
+    ];
+
+    if (params.search) {
+      aggregateObject[1]['$match']['$or'] = [
+        { name: { $regex: new RegExp(params.search || '', 'i') } },
+        { id: params.search },
+      ];
+    }
+
+    if (params.applicationIds && params.applicationIds.length > 0) {
+      aggregateObject[1]['$match']['relation.applicationId'] = { $in: applicationIds };
+    }
+
+    const involveProjects = await Model.auth.aggregate(aggregateObject);
+    const folderIds = _.flatten(_.map(involveProjects, '_id'));
+
+    const involveProjectList: FolderInfo[] = [];
+    if (folderIds.length > 0) {
+      // Get project detail
+      const pageSize = this.setPageSize(params);
+      const projectList = await Service.folder.list.find({ id: { $in: folderIds } }, '', {
+        sort: { createTime: -1 },
+        skip: (pageSize.page - 1) * pageSize.size,
+        limit: pageSize.size,
+      });
+      const [userObject, appList] = await Promise.all([
+        Service.user.getUserBaseObjectByIds(_.map(projectList, 'creator')),
+        Service.application.getDetailByIds(_.map(projectList, 'applicationId')),
+      ]);
+
+      const appObject = _.keyBy(appList, 'id');
+      projectList.forEach((project) => {
+        involveProjectList.push(
+          Object.assign(
+            _.omit(project, ['creator', 'applicationId']),
+            { creator: userObject[project.creator] },
+            { application: _.pick(appObject[project.applicationId], ['id', 'name']) },
+          ) as FolderInfo,
+        );
+      });
+    }
+
+    return { list: involveProjectList, count: involveProjects.length || 0 };
+  }
+
+  /**
+   * get user projects by user create file
+   * @param params
+   * @returns
+   */
+  async getUserFolderListByFile(params: UserFileFolderSearch): Promise<PageData<FolderInfo>> {
+    const aggregateObject: any[] = [
+      {
+        $lookup: {
+          from: 'fp_application_folder',
+          localField: 'folderId',
+          foreignField: 'id',
+          as: 'folder',
+        },
+      },
+      {
+        $match: {
+          type: { $in: params.types || [TYPE.PAGE, TYPE.TEMPLATE, TYPE.BLOCK] },
+          deleted: false,
+          'folder.deleted': false,
+        },
+      },
+      { $group: { _id: '$folder.id' } },
+      { $sort: { 'folder.createTime': -1 } },
+      { $project: { 'folder.id': 1 } },
+    ];
+
+    if (params.userId) {
+      aggregateObject[1]['$match'].creator = params.userId;
+    }
+
+    if (params.search) {
+      aggregateObject[1]['$match']['$or'] = [
+        { name: { $regex: new RegExp(params.search || '', 'i') } },
+        { id: params.search },
+      ];
+    }
+
+    if (params.applicationIds && params.applicationIds.length > 0) {
+      aggregateObject[1]['$match'].applicationId = { $in: params.applicationIds };
+    }
+
+    const folderIdList = await Model.file.aggregate(aggregateObject);
+    const folderIds = _.chunk(_.flatten(_.map(folderIdList, '_id')), params.size)[
+      params.page ? params.page - 1 : 0
+    ];
+    let folderList = await Service.folder.list.getDetailByIds(folderIds || []);
+
+    folderList = _.orderBy(folderList, ['createTime'], ['desc']);
+
+    let folderPageInfo: PageData<FolderInfo> = { list: [], count: folderIdList.length };
+    const [userObject, appList] = await Promise.all([
+      Service.user.getUserBaseObjectByIds(_.map(folderList, 'creator')),
+      Service.application.getDetailByIds(_.map(folderList, 'applicationId')),
+    ]);
+
+    const appObject = _.keyBy(appList, 'id');
+    folderList.forEach((folder) => {
+      folderPageInfo.list.push(
+        Object.assign(
+          _.omit(folder, ['creator', 'applicationId']),
+          { creator: userObject[folder.creator] },
+          { application: _.pick(appObject[folder.applicationId], ['id', 'name']) },
+        ) as FolderInfo,
+      );
+    });
+
+    return folderPageInfo;
   }
 }

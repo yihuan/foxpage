@@ -2,22 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-### [0.3.2](https://github.com/foxpage/foxpage/compare/v0.3.1...v0.3.2) (2022-03-07)
+## [0.6.0](https://github.com/foxpage/foxpage/compare/v0.5.1...v0.6.0) (2023-06-28)
 
 
 ### Features
 
-* 🎸 optimize portal styles ([778aea3](https://github.com/foxpage/foxpage/commit/778aea3c337184c0cd2d5f1266292a8bc65eb5c4))
+* 🎸 update dev config ([41fe535](https://github.com/foxpage/foxpage/commit/41fe535d762060b6e3019cd16bbfd44dc483cfb5))
+* 🎸 update DEV config ([3867b95](https://github.com/foxpage/foxpage/commit/3867b9577611b17ae07bfa760a87ea08c5129a3a))
+* 🎸 update visualFrameSrc config ([d891e7b](https://github.com/foxpage/foxpage/commit/d891e7ba010e270cec16fdd5a0f5487ec8ac43a0))
+* 🎸 upgrade ([209670a](https://github.com/foxpage/foxpage/commit/209670a6e161c63458223ecbf3522dde8373876b))
 
+### [0.5.2](https://github.com/foxpage/foxpage/compare/v0.5.1...v0.5.2) (2023-02-08)
 
-### Bug Fixes
-
-* 🐛 Fixed component register bug ([48ccb52](https://github.com/foxpage/foxpage/commit/48ccb52da285ac5835832a7b906d0210f00c7a79)), closes [#3](https://github.com/foxpage/foxpage/issues/3)
-* 🐛 Fixed create resource folder, path format failed issue ([b5b4730](https://github.com/foxpage/foxpage/commit/b5b473046197564b548d1df31edc02df2fe210ac))
-* 🐛 Fixed get unpkg resource failed issue ([e25133c](https://github.com/foxpage/foxpage/commit/e25133cbaa277e2dc9070952103db6ebb89b48bf))
-
-# Changelog
-
-All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
+### [0.4.2](https://github.com/foxpage/foxpage/compare/v0.4.1...v0.4.2) (2022-10-13)
 
 # Changelog
